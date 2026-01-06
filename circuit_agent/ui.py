@@ -1,0 +1,209 @@
+"""
+UI utilities for Circuit Agent - colors, terminal helpers, display functions.
+"""
+
+import os
+import sys
+import difflib
+from typing import Optional
+
+
+class Colors:
+    """ANSI color codes for terminal output."""
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    CYAN = "\033[96m"
+    MAGENTA = "\033[95m"
+    BLUE = "\033[94m"
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+
+
+# Shorthand alias
+C = Colors
+
+
+def clear_screen():
+    """Clear the terminal screen."""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
+def clear_line():
+    """Clear the current line in terminal."""
+    print("\r" + " " * 80 + "\r", end="", flush=True)
+
+
+def print_header(working_dir: str):
+    """Print the application header."""
+    print(f"""
+{C.CYAN}╔══════════════════════════════════════════════════════════╗
+║               Circuit Agent v3.0                          ║
+║         AI-Powered Coding Assistant                       ║
+╚══════════════════════════════════════════════════════════╝{C.RESET}
+
+{C.BOLD}Working Directory:{C.RESET} {C.GREEN}{working_dir}{C.RESET}
+""")
+
+
+def print_welcome():
+    """Print the welcome message with available commands."""
+    print(f"""
+{C.CYAN}{'─' * 60}{C.RESET}
+{C.BOLD}Circuit Agent v3.0 Ready!{C.RESET}
+
+{C.DIM}Commands:{C.RESET}  /help /save /load /compact /git /auto /quit
+
+{C.DIM}Tools:{C.RESET}  File ops, search, commands, git, {C.GREEN}web search & fetch (NEW){C.RESET}
+
+{C.DIM}Tips:{C.RESET}
+  - Type 'a' during confirmation to auto-approve all actions
+  - Create CIRCUIT.md for project-specific instructions
+  - Use /save to save sessions, /load to resume
+  - Use /help for full command list
+{C.CYAN}{'─' * 60}{C.RESET}
+""")
+
+
+def print_help():
+    """Print detailed help information."""
+    print(f"""
+{C.BOLD}Commands:{C.RESET}
+  /help, /h    - Show this help
+  /files       - List files in working directory
+  /clear, /c   - Clear conversation history
+  /history     - Show recent conversation
+  /model       - Change model
+  /tokens      - Show token usage for session
+  /undo [file] - Restore file from backup
+  /config      - Show current configuration
+  /git         - Quick git status
+  /auto        - Toggle auto-approve mode
+  /stream      - Toggle response streaming
+  /logout      - Delete saved credentials
+  /quit, /q    - Exit
+
+{C.BOLD}Session Management (NEW in v3.0):{C.RESET}
+  /save [name] - Save current session
+  /load [name] - Load a saved session (shows list if no name)
+  /sessions    - List all saved sessions
+  /compact     - Compress old messages to save tokens
+
+{C.BOLD}During Confirmations:{C.RESET}
+  y            - Yes, allow this action
+  n            - No, cancel this action
+  a            - Allow this and all future actions (auto-approve)
+
+{C.BOLD}New Tools in v3.0:{C.RESET}
+  web_fetch    - Fetch documentation and web content
+  web_search   - Search the web for solutions
+
+{C.BOLD}Tips:{C.RESET}
+  - Ask the agent to explore the codebase first
+  - Be specific about what you want to change
+  - Use /auto to skip confirmations (use with caution!)
+  - Use web_search to look up error messages
+  - Create a CIRCUIT.md file for project-specific instructions
+
+{C.BOLD}Configuration:{C.RESET}
+  Config:     ~/.config/circuit-agent/config.json
+  Sessions:   ~/.config/circuit-agent/sessions/
+  Global:     ~/.config/circuit-agent/CIRCUIT.md
+  Project:    ./CIRCUIT.md (auto-loaded)
+""")
+
+
+def print_token_usage(prompt_tokens: int, completion_tokens: int,
+                      session_prompt: int, session_completion: int):
+    """Print token usage statistics."""
+    total = prompt_tokens + completion_tokens
+    session_total = session_prompt + session_completion
+    print(f"\n{C.DIM}Tokens: {prompt_tokens:,} in / {completion_tokens:,} out ({total:,}) | "
+          f"Session: {session_total:,} total{C.RESET}")
+
+
+def show_diff(old_text: str, new_text: str, path: str, max_lines: int = 30) -> None:
+    """Display a unified diff with colors."""
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+
+    # Ensure lines end with newline for proper diff display
+    if old_lines and not old_lines[-1].endswith('\n'):
+        old_lines[-1] += '\n'
+    if new_lines and not new_lines[-1].endswith('\n'):
+        new_lines[-1] += '\n'
+
+    diff = list(difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+        lineterm=''
+    ))
+
+    if not diff:
+        print(f"{C.DIM}(no visible changes){C.RESET}")
+        return
+
+    for line in diff[:max_lines]:
+        line = line.rstrip('\n')
+        if line.startswith('+++') or line.startswith('---'):
+            print(f"{C.BOLD}{line}{C.RESET}")
+        elif line.startswith('+'):
+            print(f"{C.GREEN}{line}{C.RESET}")
+        elif line.startswith('-'):
+            print(f"{C.RED}{line}{C.RESET}")
+        elif line.startswith('@@'):
+            print(f"{C.CYAN}{line}{C.RESET}")
+        else:
+            print(line)
+
+    if len(diff) > max_lines:
+        print(f"{C.DIM}... ({len(diff) - max_lines} more lines){C.RESET}")
+
+
+def print_tool_call(tool_name: str, detail: str = ""):
+    """Print a tool call indicator."""
+    if detail:
+        # Truncate long details
+        if len(detail) > 60:
+            detail = detail[:57] + "..."
+        print(f"{C.DIM}  [{tool_name}] {detail}{C.RESET}")
+    else:
+        print(f"{C.DIM}  [{tool_name}]{C.RESET}")
+
+
+def print_error(message: str):
+    """Print an error message."""
+    print(f"  {C.RED}Error: {message}{C.RESET}")
+
+
+def print_success(message: str):
+    """Print a success message."""
+    print(f"  {C.GREEN}{message}{C.RESET}")
+
+
+def print_warning(message: str):
+    """Print a warning message."""
+    print(f"  {C.YELLOW}{message}{C.RESET}")
+
+
+def print_info(message: str):
+    """Print an info message."""
+    print(f"  {C.DIM}{message}{C.RESET}")
+
+
+def confirm(prompt: str, default: bool = False) -> bool:
+    """Ask for user confirmation."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    response = input(f"\n{C.CYAN}{prompt} {suffix}:{C.RESET} ").strip().lower()
+
+    if not response:
+        return default
+    return response in ('y', 'yes')
+
+
+def spinner_frame(frame: int) -> str:
+    """Get a spinner frame for progress indication."""
+    frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    return frames[frame % len(frames)]
