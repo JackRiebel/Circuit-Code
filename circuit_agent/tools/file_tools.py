@@ -150,6 +150,27 @@ FILE_TOOLS = [
                 "required": ["command"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "html_to_markdown",
+            "description": "Convert an HTML file to Markdown. Extracts text content, removes scripts/styles, and formats as markdown. Use this for large HTML files that are too big to read directly.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "input_path": {
+                        "type": "string",
+                        "description": "Path to the HTML file to convert"
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "Path for the output markdown file (e.g., 'output.md')"
+                    }
+                },
+                "required": ["input_path", "output_path"]
+            }
+        }
     }
 ]
 
@@ -463,3 +484,86 @@ class FileTools:
             return f"Error: Command timed out after {timeout} seconds\nTip: Use timeout parameter for long-running commands."
         except Exception as e:
             return f"Error running command: {e}"
+
+    def html_to_markdown(self, args: dict, confirmed: bool = False) -> str:
+        """Convert an HTML file to Markdown."""
+        input_path = args.get("input_path", "")
+        output_path = args.get("output_path", "")
+
+        try:
+            full_input = self._safe_path(input_path)
+            full_output = self._safe_path(output_path)
+        except ValueError as e:
+            return f"Error: {e}"
+
+        if not os.path.exists(full_input):
+            return f"Error: File not found: {input_path}"
+
+        try:
+            with open(full_input, 'r', encoding='utf-8', errors='replace') as f:
+                html = f.read()
+
+            # Remove script and style tags with content
+            html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<head[^>]*>.*?</head>', '', html, flags=re.DOTALL | re.IGNORECASE)
+
+            # Convert headers
+            html = re.sub(r'<h1[^>]*>(.*?)</h1>', r'\n# \1\n', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<h2[^>]*>(.*?)</h2>', r'\n## \1\n', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<h3[^>]*>(.*?)</h3>', r'\n### \1\n', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<h4[^>]*>(.*?)</h4>', r'\n#### \1\n', html, flags=re.DOTALL | re.IGNORECASE)
+
+            # Convert paragraphs and breaks
+            html = re.sub(r'<p[^>]*>', '\n\n', html, flags=re.IGNORECASE)
+            html = re.sub(r'</p>', '', html, flags=re.IGNORECASE)
+            html = re.sub(r'<br[^>]*/?\s*>', '\n', html, flags=re.IGNORECASE)
+            html = re.sub(r'<div[^>]*>', '\n', html, flags=re.IGNORECASE)
+            html = re.sub(r'</div>', '\n', html, flags=re.IGNORECASE)
+
+            # Convert lists
+            html = re.sub(r'<li[^>]*>', '\n- ', html, flags=re.IGNORECASE)
+            html = re.sub(r'</li>', '', html, flags=re.IGNORECASE)
+            html = re.sub(r'<[ou]l[^>]*>', '\n', html, flags=re.IGNORECASE)
+            html = re.sub(r'</[ou]l>', '\n', html, flags=re.IGNORECASE)
+
+            # Convert code blocks
+            html = re.sub(r'<pre[^>]*>(.*?)</pre>', r'\n```\n\1\n```\n', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<code[^>]*>(.*?)</code>', r'`\1`', html, flags=re.DOTALL | re.IGNORECASE)
+
+            # Convert formatting
+            html = re.sub(r'<strong[^>]*>(.*?)</strong>', r'**\1**', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<b[^>]*>(.*?)</b>', r'**\1**', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<em[^>]*>(.*?)</em>', r'*\1*', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<i[^>]*>(.*?)</i>', r'*\1*', html, flags=re.DOTALL | re.IGNORECASE)
+
+            # Convert links
+            html = re.sub(r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', r'[\2](\1)', html, flags=re.DOTALL | re.IGNORECASE)
+
+            # Remove remaining HTML tags
+            html = re.sub(r'<[^>]+>', ' ', html)
+
+            # Clean up HTML entities
+            html = html.replace('&nbsp;', ' ')
+            html = html.replace('&amp;', '&')
+            html = html.replace('&lt;', '<')
+            html = html.replace('&gt;', '>')
+            html = html.replace('&quot;', '"')
+            html = html.replace('&#39;', "'")
+
+            # Clean up whitespace
+            html = re.sub(r'[ \t]+', ' ', html)
+            html = re.sub(r'\n[ \t]+', '\n', html)
+            html = re.sub(r'[ \t]+\n', '\n', html)
+            html = re.sub(r'\n{3,}', '\n\n', html)
+            markdown = html.strip()
+
+            # Write output
+            with open(full_output, 'w', encoding='utf-8') as f:
+                f.write(markdown)
+
+            lines = markdown.count('\n') + 1
+            return f"Successfully converted {input_path} to {output_path} ({lines} lines)"
+
+        except Exception as e:
+            return f"Error converting HTML to markdown: {e}"

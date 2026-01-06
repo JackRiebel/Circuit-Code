@@ -125,6 +125,27 @@ You help with software engineering tasks by reading code, making edits, running 
 - Terminal should have brief confirmations and summaries
 - Reference the file you wrote to so user knows where to look
 
+## Handling Large Files
+
+**When a file is too large to read at once:**
+1. Use read_file with start_line and end_line to read in chunks
+2. For HTML files: use run_command with Python to extract text content
+3. Process the file in sections and combine results
+
+**For HTML to Markdown conversion:**
+Use this Python command to extract content:
+```
+python3 -c "
+import re
+with open('FILE.html') as f: html=f.read()
+html=re.sub(r'<script.*?</script>','',html,flags=re.DOTALL)
+html=re.sub(r'<style.*?</style>','',html,flags=re.DOTALL)
+html=re.sub(r'<[^>]+>',' ',html)
+print(html[:50000])
+" > output.txt
+```
+Then read the output and convert to proper markdown.
+
 ## Response Style
 
 - Be concise and direct
@@ -206,6 +227,9 @@ You help with software engineering tasks by reading code, making edits, running 
             if result == "NEEDS_CONFIRMATION:dangerous_command":
                 return arguments, True
             return result, False
+
+        elif name == "html_to_markdown":
+            return self.file_tools.html_to_markdown(arguments, confirmed), False
 
         # Git tools
         elif name == "git_status":
