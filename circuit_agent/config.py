@@ -520,3 +520,294 @@ def get_config_summary() -> Dict[str, Any]:
         "has_credentials": bool(client_id and client_secret and app_key),
         "client_id_preview": client_id[:8] + "..." if client_id else None,
     }
+
+
+# =========================================================================
+# MCP (Model Context Protocol) Configuration
+# =========================================================================
+
+MCP_CONFIG_FILE = os.path.join(CONFIG_DIR, "mcp_servers.json")
+
+
+def load_github_pat() -> Optional[str]:
+    """
+    Load GitHub Personal Access Token from available sources.
+
+    Priority order:
+    1. Environment variable GITHUB_PERSONAL_ACCESS_TOKEN
+    2. System keyring
+    3. Config file
+    """
+    # Environment variable first
+    if os.environ.get('GITHUB_PERSONAL_ACCESS_TOKEN'):
+        return os.environ.get('GITHUB_PERSONAL_ACCESS_TOKEN')
+
+    # Also check GITHUB_TOKEN as alternative
+    if os.environ.get('GITHUB_TOKEN'):
+        return os.environ.get('GITHUB_TOKEN')
+
+    # Try keyring
+    if KEYRING_AVAILABLE:
+        try:
+            key = keyring.get_password(KEYRING_SERVICE, "github_pat")
+            if key:
+                return key
+        except Exception:
+            pass
+
+    # Fall back to config file
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                return config.get('github_pat')
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    return None
+
+
+def save_github_pat(pat: str, use_keyring: bool = True) -> Tuple[bool, str]:
+    """
+    Save GitHub Personal Access Token securely.
+
+    Args:
+        pat: GitHub Personal Access Token
+        use_keyring: If True and available, use system keyring
+
+    Returns:
+        Tuple of (success, storage_method)
+    """
+    # Try keyring first
+    if use_keyring and KEYRING_AVAILABLE:
+        try:
+            keyring.set_password(KEYRING_SERVICE, "github_pat", pat)
+            return True, "keyring"
+        except Exception:
+            pass
+
+    # Fall back to config file
+    try:
+        os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        config['github_pat'] = pat
+
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        os.chmod(CONFIG_FILE, 0o600)
+        return True, "file"
+    except IOError:
+        return False, "none"
+
+
+def delete_github_pat() -> bool:
+    """Delete GitHub PAT from storage."""
+    deleted = False
+
+    # Delete from keyring
+    if KEYRING_AVAILABLE:
+        try:
+            keyring.delete_password(KEYRING_SERVICE, "github_pat")
+            deleted = True
+        except Exception:
+            pass
+
+    # Delete from config file
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            if 'github_pat' in config:
+                del config['github_pat']
+                with open(CONFIG_FILE, 'w') as f:
+                    json.dump(config, f, indent=2)
+                deleted = True
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    return deleted
+
+
+def load_mcp_servers() -> Dict[str, Any]:
+    """
+    Load MCP server configurations.
+
+    Returns:
+        Dictionary with server configurations
+    """
+    if not os.path.exists(MCP_CONFIG_FILE):
+        return {"servers": {}}
+
+    try:
+        with open(MCP_CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {"servers": {}}
+
+
+def save_mcp_servers(config: Dict[str, Any]) -> bool:
+    """
+    Save MCP server configurations.
+
+    Args:
+        config: Dictionary with server configurations
+
+    Returns:
+        True if saved successfully
+    """
+    try:
+        os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+
+        with open(MCP_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        os.chmod(MCP_CONFIG_FILE, 0o600)
+        return True
+    except IOError:
+        return False
+
+
+def load_github_mcp_config() -> Dict[str, Any]:
+    """
+    Load GitHub MCP server configuration.
+
+    Returns:
+        Dictionary with GitHub MCP settings
+    """
+    mcp_config = load_mcp_servers()
+    return mcp_config.get("servers", {}).get("github", {
+        "enabled": False,
+        "toolsets": ["repos", "issues", "pull_requests", "actions"],
+        "use_remote": True,
+    })
+
+
+def save_github_mcp_config(
+    enabled: bool,
+    toolsets: list,
+    use_remote: bool = True
+) -> bool:
+    """
+    Save GitHub MCP server configuration.
+
+    Args:
+        enabled: Whether GitHub MCP is enabled
+        toolsets: List of enabled toolsets
+        use_remote: Use remote server (True) or Docker (False)
+
+    Returns:
+        True if saved successfully
+    """
+    mcp_config = load_mcp_servers()
+
+    if "servers" not in mcp_config:
+        mcp_config["servers"] = {}
+
+    mcp_config["servers"]["github"] = {
+        "enabled": enabled,
+        "toolsets": toolsets,
+        "use_remote": use_remote,
+    }
+
+    return save_mcp_servers(mcp_config)
+
+
+# =========================================================================
+# UI Settings Persistence
+# =========================================================================
+
+UI_SETTINGS_FILE = os.path.join(CONFIG_DIR, "ui_settings.json")
+
+DEFAULT_UI_SETTINGS = {
+    "theme": "dark",
+    "font_family": "Consolas, Monaco, monospace",
+    "font_size": 13,
+    "tab_size": 4,
+    "use_spaces": True,
+    "word_wrap": False,
+    "show_minimap": True,
+    "show_line_numbers": True,
+    "auto_save": False,
+    "auto_save_interval": 60,  # seconds
+    "terminal_font_size": 12,
+    "window_geometry": None,  # QByteArray stored as hex string
+    "recent_projects": [],
+    "last_project": None,
+}
+
+
+def load_ui_settings() -> Dict[str, Any]:
+    """
+    Load UI settings from settings file.
+
+    Returns:
+        Dictionary with UI settings, using defaults for missing keys
+    """
+    settings = DEFAULT_UI_SETTINGS.copy()
+
+    if os.path.exists(UI_SETTINGS_FILE):
+        try:
+            with open(UI_SETTINGS_FILE, 'r') as f:
+                saved = json.load(f)
+                settings.update(saved)
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    return settings
+
+
+def save_ui_settings(settings: Dict[str, Any]) -> bool:
+    """
+    Save UI settings to settings file.
+
+    Args:
+        settings: Dictionary with UI settings to save
+
+    Returns:
+        True if saved successfully
+    """
+    try:
+        os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+
+        # Merge with existing settings to preserve any additional keys
+        existing = load_ui_settings()
+        existing.update(settings)
+
+        with open(UI_SETTINGS_FILE, 'w') as f:
+            json.dump(existing, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+def update_ui_setting(key: str, value: Any) -> bool:
+    """
+    Update a single UI setting.
+
+    Args:
+        key: Setting key to update
+        value: New value for the setting
+
+    Returns:
+        True if saved successfully
+    """
+    settings = load_ui_settings()
+    settings[key] = value
+    return save_ui_settings(settings)
+
+
+def reset_ui_settings() -> bool:
+    """
+    Reset UI settings to defaults.
+
+    Returns:
+        True if reset successfully
+    """
+    return save_ui_settings(DEFAULT_UI_SETTINGS)

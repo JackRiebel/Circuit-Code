@@ -15,15 +15,22 @@ import httpx
 
 from .config import (
     TOKEN_URL, CHAT_BASE_URL, API_VERSION,
-    load_circuit_md, detect_project_type, ssl_config
+    load_circuit_md, detect_project_type, ssl_config,
+    load_github_pat, load_github_mcp_config
 )
 from .tools import TOOLS, FileTools, GitTools, WebTools, BackupManager
+from .tools.github_tools import GitHubTools, GITHUB_TOOLS
 from .memory import SessionManager, ContextCompactor
 from .streaming import stream_chat_completion, non_streaming_chat_completion, StreamingResponse
 from .ui import C, clear_line, show_diff, print_tool_call, print_error, print_success
 from .security import SecretDetector, AuditLogger, CostTracker
 from .context import SmartContextManager
 from .errors import SmartError
+
+# MCP support
+from .mcp import MCPClientManager
+from .mcp.servers.github import GitHubMCPServer
+from .mcp.transport import MCPTransportError
 
 
 class CircuitAgent:
@@ -47,6 +54,7 @@ class CircuitAgent:
         self.file_tools = FileTools(working_dir, self.backup_manager, self.smart_error)
         self.git_tools = GitTools(working_dir, self.smart_error)
         self.web_tools = WebTools()
+        self.github_tools = GitHubTools()
 
         # Session and compaction
         self.session_manager = SessionManager()
@@ -66,6 +74,10 @@ class CircuitAgent:
         # v4.0: Smart context management
         self.context_manager = SmartContextManager(max_tokens=120000)
 
+        # v5.0: MCP (Model Context Protocol) support
+        self.mcp_manager = MCPClientManager()
+        self._mcp_tools_cache: List[Dict[str, Any]] = []
+
         # Settings
         self.stream_responses = True
         self.auto_approve = False  # Skip confirmations when True
@@ -75,6 +87,9 @@ class CircuitAgent:
 
         # Initialize system prompt
         self._init_system_prompt()
+
+        # Initialize MCP servers
+        self._init_mcp_servers()
 
     def _init_system_prompt(self):
         """Set up the system prompt for the coding agent."""
@@ -202,6 +217,95 @@ IMPORTANT: Thinking mode is ON. Before taking any action, briefly explain your r
 
 Then proceed with your response."""
 
+    def _init_mcp_servers(self):
+        """Initialize configured MCP servers."""
+        try:
+            # Check for GitHub MCP configuration
+            github_config = load_github_mcp_config()
+            github_pat = load_github_pat()
+
+            if github_config.get("enabled") and github_pat:
+                # Create GitHub MCP server config
+                toolsets = github_config.get("toolsets", [])
+                use_remote = github_config.get("use_remote", True)
+
+                if use_remote:
+                    config = GitHubMCPServer.get_remote_config(
+                        pat=github_pat,
+                        toolsets=toolsets,
+                        enabled=True
+                    )
+                else:
+                    config = GitHubMCPServer.get_docker_config(
+                        pat=github_pat,
+                        toolsets=toolsets,
+                        enabled=True
+                    )
+
+                # Connect to the server
+                if self.mcp_manager.connect(config):
+                    self._mcp_tools_cache = self.mcp_manager.list_tools()
+                    print(f"{C.DIM}  [MCP: GitHub connected, {len(self._mcp_tools_cache)} tools available]{C.RESET}")
+        except Exception as e:
+            print(f"{C.DIM}  [MCP init warning: {e}]{C.RESET}")
+
+    def init_mcp(self, configs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Initialize MCP servers from configuration list.
+
+        Args:
+            configs: List of MCP server configurations
+
+        Returns:
+            Status dict with connected servers and tool counts
+        """
+        from .mcp.config import MCPServerConfig
+
+        results = {"connected": [], "failed": [], "total_tools": 0}
+
+        for config_dict in configs:
+            try:
+                config = MCPServerConfig.from_dict(config_dict)
+                if self.mcp_manager.connect(config):
+                    results["connected"].append(config.id)
+                else:
+                    results["failed"].append(config.id)
+            except Exception as e:
+                results["failed"].append(f"{config_dict.get('id', 'unknown')}: {e}")
+
+        # Update tools cache
+        self._mcp_tools_cache = self.mcp_manager.list_tools()
+        results["total_tools"] = len(self._mcp_tools_cache)
+
+        return results
+
+    def get_all_tools(self) -> List[Dict[str, Any]]:
+        """Get all available tools including GitHub and MCP tools."""
+        all_tools = list(TOOLS)  # Copy built-in tools
+
+        # Add GitHub tools if configured
+        github_config = load_github_mcp_config()
+        if github_config.get("enabled") and load_github_pat():
+            all_tools.extend(GITHUB_TOOLS)
+
+        # Add MCP tools
+        if self._mcp_tools_cache:
+            all_tools.extend(self._mcp_tools_cache)
+
+        return all_tools
+
+    def get_mcp_status(self) -> Dict[str, Any]:
+        """Get MCP connection status."""
+        return self.mcp_manager.get_status()
+
+    def disconnect_mcp(self, server_id: str = None):
+        """Disconnect from MCP server(s)."""
+        if server_id:
+            self.mcp_manager.disconnect(server_id)
+        else:
+            self.mcp_manager.disconnect_all()
+        self._mcp_tools_cache = self.mcp_manager.list_tools()
+
     async def get_token(self) -> str:
         """Get OAuth access token, refreshing if needed."""
         if self._token and time.time() < (self._expiry - 300):
@@ -304,6 +408,78 @@ Then proceed with your response."""
 
         elif name == "web_search":
             return self.web_tools.web_search(arguments, confirmed), False
+
+        # GitHub tools
+        elif name == "github_whoami":
+            return self.github_tools.get_authenticated_user(arguments, confirmed), False
+
+        elif name == "github_list_repos":
+            return self.github_tools.list_repos(arguments, confirmed), False
+
+        elif name == "github_get_repo":
+            return self.github_tools.get_repo(arguments, confirmed), False
+
+        elif name == "github_create_repo":
+            result = self.github_tools.create_repo(arguments, confirmed)
+            if result == "NEEDS_CONFIRMATION:github_create_repo":
+                return arguments, True
+            return result, False
+
+        elif name == "github_list_issues":
+            return self.github_tools.list_issues(arguments, confirmed), False
+
+        elif name == "github_get_issue":
+            return self.github_tools.get_issue(arguments, confirmed), False
+
+        elif name == "github_create_issue":
+            result = self.github_tools.create_issue(arguments, confirmed)
+            if result == "NEEDS_CONFIRMATION:github_create_issue":
+                return arguments, True
+            return result, False
+
+        elif name == "github_close_issue":
+            result = self.github_tools.close_issue(arguments, confirmed)
+            if result == "NEEDS_CONFIRMATION:github_close_issue":
+                return arguments, True
+            return result, False
+
+        elif name == "github_list_prs":
+            return self.github_tools.list_pull_requests(arguments, confirmed), False
+
+        elif name == "github_get_pr":
+            return self.github_tools.get_pull_request(arguments, confirmed), False
+
+        elif name == "github_list_workflows":
+            return self.github_tools.list_workflow_runs(arguments, confirmed), False
+
+        elif name == "github_search_repos":
+            return self.github_tools.search_repos(arguments, confirmed), False
+
+        elif name == "github_search_issues":
+            return self.github_tools.search_issues(arguments, confirmed), False
+
+        # MCP tools (prefixed with mcp_)
+        elif name.startswith("mcp_") or self.mcp_manager.has_tool(name):
+            try:
+                result = self.mcp_manager.execute_tool(name, arguments)
+                # Format the MCP result
+                if isinstance(result, dict):
+                    content = result.get("content", [])
+                    if content:
+                        # Extract text from content blocks
+                        text_parts = []
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif isinstance(item, str):
+                                text_parts.append(item)
+                        return "\n".join(text_parts) if text_parts else json.dumps(result), False
+                    return json.dumps(result), False
+                return str(result), False
+            except MCPTransportError as e:
+                return f"MCP error: {e}", False
+            except Exception as e:
+                return f"MCP tool error: {e}", False
 
         else:
             return f"Unknown tool: {name}", False
@@ -408,6 +584,20 @@ Then proceed with your response."""
         elif tool_name == "web_search":
             query = arguments.get('query', '')
             return query[:40] + ('...' if len(query) > 40 else '')
+        # MCP tools
+        elif tool_name.startswith("mcp_"):
+            # Extract the actual tool name after mcp_serverid_
+            parts = tool_name.split("_", 2)
+            if len(parts) >= 3:
+                action = parts[2]
+            else:
+                action = tool_name
+            # Get first significant argument
+            for key in ["owner", "repo", "query", "title", "name", "path"]:
+                if key in arguments:
+                    val = str(arguments[key])
+                    return f"{action}: {val[:30]}{'...' if len(val) > 30 else ''}"
+            return action
         return ""
 
     # Read-only tools that can run in parallel safely
@@ -419,7 +609,16 @@ Then proceed with your response."""
 
     def _is_read_only_tool(self, tool_name: str) -> bool:
         """Check if a tool is read-only and safe for parallel execution."""
-        return tool_name in self.READ_ONLY_TOOLS
+        if tool_name in self.READ_ONLY_TOOLS:
+            return True
+        # Most MCP read operations (list, get, search) are safe for parallel execution
+        if tool_name.startswith("mcp_"):
+            # Whitelist of known read-only MCP operations
+            read_patterns = ("_list", "_get", "_search", "_read", "_view", "_fetch")
+            for pattern in read_patterns:
+                if pattern in tool_name:
+                    return True
+        return False
 
     async def _process_tool_calls_parallel(
         self,
@@ -581,12 +780,15 @@ Then proceed with your response."""
             while iteration < max_iterations:
                 iteration += 1
 
+                # Get all tools including MCP tools
+                all_tools = self.get_all_tools()
+
                 payload: Dict[str, Any] = {
                     "messages": messages,
                     "user": json.dumps({"appkey": self.app_key}),
                     "temperature": 0.7,
                     "max_tokens": 4096,
-                    "tools": TOOLS,
+                    "tools": all_tools,
                     "tool_choice": "auto",
                 }
 

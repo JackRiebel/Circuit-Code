@@ -609,3 +609,139 @@ class AgentService:
             "session_cost_usd": self._state.cost.session_cost_usd,
             "by_model": self._state.cost.by_model,
         }
+
+    # =========================================================================
+    # MCP (Model Context Protocol) Methods
+    # =========================================================================
+
+    async def init_mcp(self, configs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Initialize MCP servers.
+
+        Args:
+            configs: List of MCP server configurations
+
+        Returns:
+            Status dict with connected servers and tool counts
+        """
+        if not self._agent:
+            return {"error": "Not connected", "connected": [], "failed": [], "total_tools": 0}
+
+        await self._events.emit_async(EventType.MCP_SERVER_CONNECTING)
+
+        try:
+            results = self._agent.init_mcp(configs)
+
+            for server_id in results.get("connected", []):
+                await self._events.emit_async(EventType.MCP_SERVER_CONNECTED, {
+                    "server_id": server_id,
+                })
+
+            for failure in results.get("failed", []):
+                await self._events.emit_async(EventType.MCP_SERVER_ERROR, {
+                    "server_id": failure,
+                })
+
+            await self._events.emit_async(EventType.MCP_TOOLS_UPDATED, {
+                "total_tools": results.get("total_tools", 0),
+            })
+
+            return results
+
+        except Exception as e:
+            error_msg = str(e)
+            await self._events.emit_async(EventType.MCP_SERVER_ERROR, {
+                "error": error_msg,
+            })
+            return {"error": error_msg, "connected": [], "failed": [], "total_tools": 0}
+
+    async def init_github_mcp(self, pat: str, toolsets: List[str] = None) -> Dict[str, Any]:
+        """
+        Initialize GitHub MCP server specifically.
+
+        Args:
+            pat: GitHub Personal Access Token
+            toolsets: List of enabled toolsets (repos, issues, pull_requests, etc.)
+
+        Returns:
+            Status dict
+        """
+        from circuit_agent.mcp.servers.github import GitHubMCPServer
+
+        if not self._agent:
+            return {"error": "Not connected", "success": False, "tool_count": 0}
+
+        await self._events.emit_async(EventType.MCP_SERVER_CONNECTING, {
+            "server_id": "github",
+        })
+
+        try:
+            config = GitHubMCPServer.get_remote_config(
+                pat=pat,
+                toolsets=toolsets or [],
+                enabled=True,
+            )
+
+            success = self._agent.mcp_manager.connect(config)
+
+            if success:
+                self._agent._mcp_tools_cache = self._agent.mcp_manager.list_tools()
+                tool_count = len(self._agent._mcp_tools_cache)
+
+                await self._events.emit_async(EventType.MCP_SERVER_CONNECTED, {
+                    "server_id": "github",
+                    "tool_count": tool_count,
+                })
+
+                await self._events.emit_async(EventType.MCP_TOOLS_UPDATED, {
+                    "total_tools": tool_count,
+                })
+
+                return {"success": True, "tool_count": tool_count}
+            else:
+                await self._events.emit_async(EventType.MCP_SERVER_ERROR, {
+                    "server_id": "github",
+                    "error": "Connection failed",
+                })
+                return {"success": False, "error": "Connection failed", "tool_count": 0}
+
+        except Exception as e:
+            error_msg = str(e)
+            await self._events.emit_async(EventType.MCP_SERVER_ERROR, {
+                "server_id": "github",
+                "error": error_msg,
+            })
+            return {"success": False, "error": error_msg, "tool_count": 0}
+
+    def disconnect_mcp(self, server_id: str = None) -> None:
+        """
+        Disconnect from MCP server(s).
+
+        Args:
+            server_id: Specific server to disconnect, or None for all
+        """
+        if not self._agent:
+            return
+
+        if server_id:
+            self._agent.mcp_manager.disconnect(server_id)
+            self._events.emit(EventType.MCP_SERVER_DISCONNECTED, {
+                "server_id": server_id,
+            })
+        else:
+            self._agent.mcp_manager.disconnect_all()
+            self._events.emit(EventType.MCP_SERVER_DISCONNECTED, {
+                "server_id": "all",
+            })
+
+        self._agent._mcp_tools_cache = self._agent.mcp_manager.list_tools()
+        self._events.emit(EventType.MCP_TOOLS_UPDATED, {
+            "total_tools": len(self._agent._mcp_tools_cache),
+        })
+
+    def get_mcp_status(self) -> Dict[str, Any]:
+        """Get MCP connection status."""
+        if not self._agent:
+            return {"connected_servers": 0, "total_tools": 0, "servers": {}}
+
+        return self._agent.get_mcp_status()

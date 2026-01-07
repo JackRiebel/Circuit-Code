@@ -54,6 +54,15 @@ class EventType(Enum):
     THINKING_STARTED = auto()
     THINKING_COMPLETED = auto()
 
+    # MCP (Model Context Protocol) events
+    MCP_SERVER_CONNECTING = auto()
+    MCP_SERVER_CONNECTED = auto()
+    MCP_SERVER_DISCONNECTED = auto()
+    MCP_SERVER_ERROR = auto()
+    MCP_TOOL_CALL_STARTED = auto()
+    MCP_TOOL_CALL_COMPLETED = auto()
+    MCP_TOOLS_UPDATED = auto()
+
 
 @dataclass
 class Event:

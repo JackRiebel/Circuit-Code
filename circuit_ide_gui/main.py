@@ -18,7 +18,12 @@ import asyncio
 import subprocess
 import re
 import time
+import logging
 from pathlib import Path
+
+# Configure logging for GUI
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger("circuit_ide")
 from typing import Optional, List, Dict, Any, Callable
 from datetime import datetime
 from enum import Enum
@@ -87,7 +92,7 @@ THEMES = {
         "INFO": "#3794ff",
         # Provider-specific colors
         "CLAUDE_COLOR": "#E8A87C",     # Light orange/coral for Claude
-        "CIRCUIT_COLOR": "#7CB9E8",    # Light blue for Circuit/Cisco
+        "CIRCUIT_COLOR": "#88CFFF",    # Light blue for Circuit/Cisco
     },
     "light": {
         "name": "Light",
@@ -147,7 +152,7 @@ THEMES = {
         "INFO": "#4080ff",
         # Provider-specific colors
         "CLAUDE_COLOR": "#FFB080",     # Light orange for midnight
-        "CIRCUIT_COLOR": "#80C0FF",    # Light blue for midnight
+        "CIRCUIT_COLOR": "#99DDFF",    # Light blue for midnight
     },
     "forest": {
         "name": "Forest",
@@ -177,7 +182,7 @@ THEMES = {
         "INFO": "#50a0d0",
         # Provider-specific colors
         "CLAUDE_COLOR": "#E8A070",     # Light orange for forest
-        "CIRCUIT_COLOR": "#70B8D8",    # Light blue for forest
+        "CIRCUIT_COLOR": "#88CFFF",    # Light blue for forest
     },
 }
 
@@ -203,8 +208,8 @@ class ThemeManager:
             for cb in cls._callbacks:
                 try:
                     cb(cls.get_theme())
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Theme callback error: {e}")
 
     @classmethod
     def on_change(cls, callback: Callable):
@@ -256,8 +261,8 @@ class RecentProjects:
             try:
                 data = json.loads(RECENT_PROJECTS_FILE.read_text())
                 return [p for p in data.get("projects", []) if Path(p).exists()][:cls.MAX_RECENT]
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to load recent projects: {e}")
         return []
 
     @classmethod
@@ -284,7 +289,8 @@ class SearchPermissions:
             try:
                 data = json.loads(SEARCH_PERMISSIONS_FILE.read_text())
                 self.allowed_dirs = [Path(p) for p in data.get("allowed_directories", [])]
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to load search permissions: {e}")
                 self.allowed_dirs = []
 
     def _save_permissions(self):
@@ -352,7 +358,10 @@ class WorkspaceProfile:
 # ============================================================================
 
 class Icons:
-    """VS Code-style icons using official SVG paths."""
+    """VS Code-style icons using official SVG paths with caching for performance."""
+
+    # Icon cache to avoid recreating the same icons
+    _icon_cache: Dict[tuple, QIcon] = {}
 
     # Official VS Code icon SVG paths (from microsoft/vscode-icons)
     SVG_CLOSE = '<path fill-rule="evenodd" clip-rule="evenodd" d="M8.00004 8.70711L11.6465 12.3536L12.3536 11.6465L8.70714 8.00001L12.3536 4.35356L11.6465 3.64645L8.00004 7.2929L4.35359 3.64645L3.64648 4.35356L7.29293 8.00001L3.64648 11.6465L4.35359 12.3536L8.00004 8.70711Z" fill="{color}"/>'
@@ -379,11 +388,24 @@ class Icons:
     SVG_CLEAR = '<path d="M8 2C8.55228 2 9 2.44772 9 3V4H13C13.5523 4 14 4.44772 14 5C14 5.55228 13.5523 6 13 6H12.9199L12.1504 13.166C12.0603 14.195 11.2006 15 10.167 15H5.83301C4.79943 15 3.93965 14.195 3.84962 13.166L3.0801 6H3C2.44772 6 2 5.55228 2 5C2 4.44772 2.44772 4 3 4H7V3C7 2.44772 7.44772 2 8 2ZM5.0918 6L5.8418 13.055C5.8618 13.276 6.0518 13.5 6.3418 13.5L9.6418 13.5C9.9318 13.5 10.1218 13.276 10.1418 13.055L10.9082 6H5.0918Z" fill="{color}"/>'
     SVG_TERMINAL = '<path d="M1 2.795L1.5 2H14.5L15 2.795V13.205L14.5 14H1.5L1 13.205V2.795ZM2 13H14V3H2V13ZM5.146 10.146L4.439 9.439L6.878 7L4.439 4.561L5.146 3.854L8.292 7L5.146 10.146ZM11 10H8V9H11V10Z" fill="{color}"/>'
 
-    @staticmethod
-    def create_icon(icon_name_or_func, size: int = 16, color: str = None) -> QIcon:
-        """Create a QIcon from an SVG path or drawing function (for backwards compatibility)."""
+    @classmethod
+    def create_icon(cls, icon_name_or_func, size: int = 16, color: str = None) -> QIcon:
+        """Create a QIcon from an SVG path or drawing function with caching."""
         from PySide6.QtSvg import QSvgRenderer
         from PySide6.QtCore import QByteArray
+
+        # Resolve color for cache key
+        resolved_color = color or Theme.TEXT_SECONDARY
+
+        # Create cache key - use id() for callables since they're not hashable by content
+        if callable(icon_name_or_func):
+            cache_key = (id(icon_name_or_func), size, resolved_color)
+        else:
+            cache_key = (icon_name_or_func, size, resolved_color)
+
+        # Return cached icon if available
+        if cache_key in cls._icon_cache:
+            return cls._icon_cache[cache_key]
 
         # If it's a callable (old-style), use the old method
         if callable(icon_name_or_func):
@@ -391,27 +413,34 @@ class Icons:
             pixmap.fill(Qt.GlobalColor.transparent)
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            c = QColor(color or Theme.TEXT_SECONDARY)
+            c = QColor(resolved_color)
             painter.setPen(QPen(c, 1.5))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             icon_name_or_func(painter, size, c)
             painter.end()
-            return QIcon(pixmap)
+            icon = QIcon(pixmap)
+        else:
+            # New style: SVG string
+            svg_path = icon_name_or_func
+            svg_content = f'''<svg width="{size}" height="{size}" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">{svg_path.format(color=resolved_color)}</svg>'''
 
-        # New style: SVG string
-        svg_path = icon_name_or_func
-        fill_color = color or Theme.TEXT_SECONDARY
-        svg_content = f'''<svg width="{size}" height="{size}" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">{svg_path.format(color=fill_color)}</svg>'''
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.GlobalColor.transparent)
 
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
+            renderer = QSvgRenderer(QByteArray(svg_content.encode()))
+            painter = QPainter(pixmap)
+            renderer.render(painter)
+            painter.end()
+            icon = QIcon(pixmap)
 
-        renderer = QSvgRenderer(QByteArray(svg_content.encode()))
-        painter = QPainter(pixmap)
-        renderer.render(painter)
-        painter.end()
+        # Cache and return
+        cls._icon_cache[cache_key] = icon
+        return icon
 
-        return QIcon(pixmap)
+    @classmethod
+    def clear_cache(cls):
+        """Clear the icon cache. Call when theme changes."""
+        cls._icon_cache.clear()
 
     @classmethod
     def close(cls, size: int = 16, color: str = None) -> QIcon:
@@ -523,6 +552,10 @@ class Icons:
         # Rotate the chevron up
         svg_up = '<path fill-rule="evenodd" clip-rule="evenodd" d="M7.97612 5.9281L12.3334 10.2854L12.9521 9.66668L8.28548 5L7.66676 5L3.0001 9.66668L3.61882 10.2854L7.97612 5.9281Z" fill="{color}"/>'
         return cls.create_icon(svg_up, size, color)
+
+
+# Clear icon cache when theme changes
+ThemeManager.on_change(lambda t: Icons.clear_cache())
 
 
 # ============================================================================
@@ -952,6 +985,137 @@ class CollapsibleSection(QWidget):
 
     def add_layout(self, layout):
         self.content_layout.addLayout(layout)
+
+
+# ============================================================================
+# Toast Notifications
+# ============================================================================
+
+class ToastNotification(QFrame):
+    """Non-blocking toast notification that auto-dismisses."""
+
+    class Type(Enum):
+        SUCCESS = "success"
+        ERROR = "error"
+        WARNING = "warning"
+        INFO = "info"
+
+    _active_toasts: List["ToastNotification"] = []
+
+    def __init__(self, message: str, toast_type: Type = Type.INFO, duration: int = 3000, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+        # Colors based on type
+        colors = {
+            self.Type.SUCCESS: (Theme.SUCCESS, "#1a3d1a"),
+            self.Type.ERROR: (Theme.ERROR, "#3d1a1a"),
+            self.Type.WARNING: (Theme.WARNING, "#3d3d1a"),
+            self.Type.INFO: (Theme.ACCENT_BLUE, "#1a2a3d"),
+        }
+        accent_color, bg_color = colors.get(toast_type, colors[self.Type.INFO])
+
+        self.setStyleSheet(f"""
+            ToastNotification {{
+                background: {bg_color};
+                border: 1px solid {accent_color};
+                border-left: 3px solid {accent_color};
+                border-radius: 4px;
+            }}
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(8)
+
+        # Icon based on type
+        icons = {
+            self.Type.SUCCESS: Icons.check,
+            self.Type.ERROR: Icons.error,
+            self.Type.WARNING: Icons.warning,
+            self.Type.INFO: Icons.info,
+        }
+        icon_fn = icons.get(toast_type, Icons.info)
+        icon_label = QLabel()
+        icon_label.setPixmap(icon_fn(14, accent_color).pixmap(14, 14))
+        layout.addWidget(icon_label)
+
+        label = QLabel(message)
+        label.setStyleSheet(f"color: {Theme.TEXT_PRIMARY}; font-size: 12px;")
+        label.setWordWrap(True)
+        layout.addWidget(label, 1)
+
+        # Close button
+        close_btn = QPushButton()
+        close_btn.setFixedSize(16, 16)
+        close_btn.setIcon(Icons.close(12, Theme.TEXT_MUTED))
+        close_btn.setStyleSheet("QPushButton { background: transparent; border: none; }")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        self.setFixedWidth(320)
+        self.adjustSize()
+
+        # Auto dismiss timer
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.close)
+        self._timer.start(duration)
+
+        # Animation for fade in
+        self._opacity = 0.0
+        self._fade_timer = QTimer(self)
+        self._fade_timer.timeout.connect(self._fade_in)
+        self._fade_timer.start(16)
+
+    def _fade_in(self):
+        self._opacity = min(1.0, self._opacity + 0.1)
+        self.setWindowOpacity(self._opacity)
+        if self._opacity >= 1.0:
+            self._fade_timer.stop()
+
+    def show(self):
+        # Position in bottom-right of parent window
+        if self.parent():
+            parent_rect = self.parent().rect()
+            parent_pos = self.parent().mapToGlobal(parent_rect.bottomRight())
+            # Stack toasts
+            offset = len(ToastNotification._active_toasts) * (self.height() + 8)
+            self.move(parent_pos.x() - self.width() - 20, parent_pos.y() - self.height() - 20 - offset)
+        ToastNotification._active_toasts.append(self)
+        super().show()
+
+    def closeEvent(self, event):
+        if self in ToastNotification._active_toasts:
+            ToastNotification._active_toasts.remove(self)
+        super().closeEvent(event)
+
+    @classmethod
+    def success(cls, message: str, parent=None, duration: int = 3000):
+        toast = cls(message, cls.Type.SUCCESS, duration, parent)
+        toast.show()
+        return toast
+
+    @classmethod
+    def error(cls, message: str, parent=None, duration: int = 5000):
+        toast = cls(message, cls.Type.ERROR, duration, parent)
+        toast.show()
+        return toast
+
+    @classmethod
+    def warning(cls, message: str, parent=None, duration: int = 4000):
+        toast = cls(message, cls.Type.WARNING, duration, parent)
+        toast.show()
+        return toast
+
+    @classmethod
+    def info(cls, message: str, parent=None, duration: int = 3000):
+        toast = cls(message, cls.Type.INFO, duration, parent)
+        toast.show()
+        return toast
 
 
 # ============================================================================
@@ -2608,8 +2772,16 @@ class SearchPanel(QWidget):
                             item.setData(Qt.ItemDataRole.UserRole, filepath)
                             self.results_list.addItem(item)
                             count += 1
-            except:
-                pass
+            except subprocess.TimeoutExpired:
+                self.status_label.setText("Search timed out")
+                return
+            except FileNotFoundError:
+                self.status_label.setText("grep not found - install grep")
+                return
+            except Exception as e:
+                logger.warning(f"Search error: {e}")
+                self.status_label.setText(f"Search failed: {str(e)[:30]}")
+                return
 
         self.status_label.setText(f"{count} results")
 
@@ -3148,6 +3320,9 @@ class AgentControlPanel(QWidget):
 class GitPanel(QWidget):
     """VS Code-style Git source control panel."""
 
+    # Signal emitted when git operations (commit, checkout, etc.) complete
+    git_operation_completed = Signal()
+
     def __init__(self, root_path: str = None, parent=None):
         super().__init__(parent)
         self.root_path = Path(root_path) if root_path else Path.cwd()
@@ -3535,6 +3710,9 @@ class GitPanel(QWidget):
                 if line:
                     self.history_list.addItem(QListWidgetItem(line))
 
+        # Emit signal so status bar can update
+        self.git_operation_completed.emit()
+
     def _stage_all(self):
         ok, _, err = self._run_git("add", "-A")
         self.status_label.setText("Staged" if ok else f"Error: {err[:30]}")
@@ -3595,17 +3773,22 @@ class SettingsPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Load saved settings, merge with defaults
+        from circuit_agent.config import load_ui_settings
+        saved = load_ui_settings()
+
         self.settings = {
             "model": "gpt-4.1",
             "auto_approve": False,
-            "provider": "cisco",
-            "font_size": 13,
-            "font_family": "Menlo",
-            "tab_size": 4,
-            "word_wrap": False,
-            "line_numbers": True,
-            "minimap": True,
-            "auto_save": False,
+            "provider": saved.get("provider", "cisco"),
+            "font_size": saved.get("font_size", 13),
+            "font_family": saved.get("font_family", "Menlo"),
+            "tab_size": saved.get("tab_size", 4),
+            "word_wrap": saved.get("word_wrap", False),
+            "line_numbers": saved.get("show_line_numbers", True),
+            "minimap": saved.get("show_minimap", True),
+            "auto_save": saved.get("auto_save", False),
             "extended_thinking": False,
         }
 
@@ -3760,7 +3943,7 @@ class SettingsPanel(QWidget):
         )
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(8, 32)
-        self.font_size_spin.setValue(13)
+        self.font_size_spin.setValue(self.settings.get("font_size", 13))
         self.font_size_spin.setFixedWidth(80)
         self.font_size_spin.setStyleSheet(self._spin_style())
         self.font_size_spin.valueChanged.connect(self._on_font_size_changed)
@@ -3774,7 +3957,7 @@ class SettingsPanel(QWidget):
         )
         self.tab_size_spin = QSpinBox()
         self.tab_size_spin.setRange(2, 8)
-        self.tab_size_spin.setValue(4)
+        self.tab_size_spin.setValue(self.settings.get("tab_size", 4))
         self.tab_size_spin.setFixedWidth(80)
         self.tab_size_spin.setStyleSheet(self._spin_style())
         self.tab_size_spin.valueChanged.connect(self._on_tab_size_changed)
@@ -3786,7 +3969,7 @@ class SettingsPanel(QWidget):
             "Word Wrap",
             "Wrap long lines to fit the editor width"
         )
-        self.word_wrap_toggle = ToggleSwitch(False)
+        self.word_wrap_toggle = ToggleSwitch(self.settings.get("word_wrap", False))
         self.word_wrap_toggle.toggled_signal.connect(self._on_word_wrap_changed)
         wrap_row.layout().addWidget(self.word_wrap_toggle)
         editor_layout.addWidget(wrap_row)
@@ -3796,7 +3979,7 @@ class SettingsPanel(QWidget):
             "Line Numbers",
             "Show line numbers in the editor gutter"
         )
-        self.line_numbers_toggle = ToggleSwitch(True)
+        self.line_numbers_toggle = ToggleSwitch(self.settings.get("line_numbers", True))
         self.line_numbers_toggle.toggled_signal.connect(self._on_line_numbers_changed)
         line_num_row.layout().addWidget(self.line_numbers_toggle)
         editor_layout.addWidget(line_num_row)
@@ -3806,7 +3989,7 @@ class SettingsPanel(QWidget):
             "Minimap",
             "Show a minimap of the code on the right side"
         )
-        self.minimap_toggle = ToggleSwitch(True)
+        self.minimap_toggle = ToggleSwitch(self.settings.get("minimap", True))
         self.minimap_toggle.toggled_signal.connect(self._on_minimap_changed)
         minimap_row.layout().addWidget(self.minimap_toggle)
         editor_layout.addWidget(minimap_row)
@@ -3816,7 +3999,7 @@ class SettingsPanel(QWidget):
             "Auto Save",
             "Automatically save files after changes"
         )
-        self.autosave_toggle = ToggleSwitch(False)
+        self.autosave_toggle = ToggleSwitch(self.settings.get("auto_save", False))
         self.autosave_toggle.toggled_signal.connect(self._on_autosave_changed)
         autosave_row.layout().addWidget(self.autosave_toggle)
         editor_layout.addWidget(autosave_row)
@@ -3901,6 +4084,99 @@ class SettingsPanel(QWidget):
         content_layout.addWidget(anthropic_card)
 
         # =================================================================
+        # MCP Servers Section (GitHub Integration)
+        # =================================================================
+        content_layout.addWidget(self._create_section_header("MCP Servers"))
+
+        mcp_card = self._create_card()
+        mcp_layout = QVBoxLayout(mcp_card)
+        mcp_layout.setContentsMargins(16, 12, 16, 12)
+        mcp_layout.setSpacing(10)
+
+        # GitHub MCP header with enable toggle
+        github_header_row = QHBoxLayout()
+        github_header = QLabel("GitHub Integration")
+        github_header.setStyleSheet(f"color: {Theme.TEXT_PRIMARY}; font-size: 13px; font-weight: 600;")
+        github_header_row.addWidget(github_header)
+        github_header_row.addStretch()
+        self.github_mcp_toggle = ToggleSwitch(False)
+        self.github_mcp_toggle.toggled_signal.connect(self._on_github_mcp_toggled)
+        github_header_row.addWidget(self.github_mcp_toggle)
+        mcp_layout.addLayout(github_header_row)
+
+        github_desc = QLabel("Connect to GitHub MCP Server for repository, issues, PR, and Actions tools")
+        github_desc.setWordWrap(True)
+        github_desc.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px;")
+        mcp_layout.addWidget(github_desc)
+
+        # GitHub PAT input
+        self.github_pat_input = self._create_credential_input("Personal Access Token", "ghp_...", password=True)
+        mcp_layout.addWidget(self.github_pat_input)
+
+        # Toolsets selection
+        toolsets_label = QLabel("Enabled Toolsets:")
+        toolsets_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 12px; margin-top: 8px;")
+        mcp_layout.addWidget(toolsets_label)
+
+        toolsets_grid = QGridLayout()
+        toolsets_grid.setSpacing(8)
+
+        self.github_toolset_checkboxes = {}
+        toolsets = [
+            ("repos", "Repositories"),
+            ("issues", "Issues"),
+            ("pull_requests", "Pull Requests"),
+            ("actions", "Actions"),
+            ("code_security", "Code Security"),
+            ("discussions", "Discussions"),
+        ]
+
+        for i, (toolset_id, toolset_name) in enumerate(toolsets):
+            checkbox = QCheckBox(toolset_name)
+            checkbox.setStyleSheet(f"""
+                QCheckBox {{
+                    color: {Theme.TEXT_SECONDARY};
+                    font-size: 11px;
+                    spacing: 6px;
+                }}
+                QCheckBox::indicator {{
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 3px;
+                    border: 1px solid {Theme.BORDER};
+                    background: {Theme.BG_INPUT};
+                }}
+                QCheckBox::indicator:checked {{
+                    background: {Theme.ACCENT_BLUE};
+                    border-color: {Theme.ACCENT_BLUE};
+                }}
+            """)
+            # Default: enable repos, issues, pull_requests, actions
+            checkbox.setChecked(toolset_id in ["repos", "issues", "pull_requests", "actions"])
+            self.github_toolset_checkboxes[toolset_id] = checkbox
+            toolsets_grid.addWidget(checkbox, i // 3, i % 3)
+
+        mcp_layout.addLayout(toolsets_grid)
+
+        # MCP buttons
+        mcp_btn_row = QHBoxLayout()
+        mcp_btn_row.setSpacing(8)
+        save_mcp_btn = self._create_button("Save GitHub Settings", primary=True)
+        save_mcp_btn.clicked.connect(self._save_github_mcp)
+        mcp_btn_row.addWidget(save_mcp_btn)
+        test_mcp_btn = self._create_button("Test Connection")
+        test_mcp_btn.clicked.connect(self._test_github_mcp)
+        mcp_btn_row.addWidget(test_mcp_btn)
+        mcp_btn_row.addStretch()
+        mcp_layout.addLayout(mcp_btn_row)
+
+        self.mcp_status = QLabel("")
+        self.mcp_status.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 11px;")
+        mcp_layout.addWidget(self.mcp_status)
+
+        content_layout.addWidget(mcp_card)
+
+        # =================================================================
         # Keyboard Shortcuts Section
         # =================================================================
         content_layout.addWidget(self._create_section_header("Keyboard Shortcuts"))
@@ -3981,6 +4257,7 @@ class SettingsPanel(QWidget):
         # Load existing settings
         self._load_credentials()
         self._load_anthropic_key()
+        self._load_github_mcp_settings()
         self._load_provider_preference()
         self._update_model_list()
 
@@ -4169,39 +4446,51 @@ class SettingsPanel(QWidget):
     # Editor Settings Handlers
     # =========================================================================
 
+    def _save_setting(self, key: str, value):
+        """Save a single setting to persistent storage."""
+        from circuit_agent.config import update_ui_setting
+        update_ui_setting(key, value)
+
     def _on_font_changed(self, font: str):
         """Handle font family change."""
         self.settings["font_family"] = font
+        self._save_setting("font_family", font)
         self.editor_settings_changed.emit({"font_family": font})
 
     def _on_font_size_changed(self, size: int):
         """Handle font size change."""
         self.settings["font_size"] = size
+        self._save_setting("font_size", size)
         self.editor_settings_changed.emit({"font_size": size})
 
     def _on_tab_size_changed(self, size: int):
         """Handle tab size change."""
         self.settings["tab_size"] = size
+        self._save_setting("tab_size", size)
         self.editor_settings_changed.emit({"tab_size": size})
 
     def _on_word_wrap_changed(self, enabled: bool):
         """Handle word wrap toggle."""
         self.settings["word_wrap"] = enabled
+        self._save_setting("word_wrap", enabled)
         self.editor_settings_changed.emit({"word_wrap": enabled})
 
     def _on_line_numbers_changed(self, enabled: bool):
         """Handle line numbers toggle."""
         self.settings["line_numbers"] = enabled
+        self._save_setting("show_line_numbers", enabled)
         self.editor_settings_changed.emit({"line_numbers": enabled})
 
     def _on_minimap_changed(self, enabled: bool):
         """Handle minimap toggle."""
         self.settings["minimap"] = enabled
+        self._save_setting("show_minimap", enabled)
         self.editor_settings_changed.emit({"minimap": enabled})
 
     def _on_autosave_changed(self, enabled: bool):
         """Handle auto-save toggle."""
         self.settings["auto_save"] = enabled
+        self._save_setting("auto_save", enabled)
         self.editor_settings_changed.emit({"auto_save": enabled})
 
     def _on_thinking_changed(self, enabled: bool):
@@ -4391,6 +4680,145 @@ class SettingsPanel(QWidget):
         else:
             self.anthropic_status.setText(message or "Connection failed")
             self.anthropic_status.setStyleSheet(f"color: {Theme.ERROR}; font-size: 10px;")
+
+    # =========================================================================
+    # MCP/GitHub Methods
+    # =========================================================================
+
+    def _load_github_mcp_settings(self):
+        """Load GitHub MCP settings from storage."""
+        try:
+            from circuit_agent.config import load_github_pat, load_github_mcp_config
+
+            # Load PAT
+            pat = load_github_pat()
+            if pat:
+                self.github_pat_input.input_field.setText(pat)
+
+            # Load MCP config
+            config = load_github_mcp_config()
+            self.github_mcp_toggle.setChecked(config.get("enabled", False))
+
+            # Load toolsets
+            toolsets = config.get("toolsets", ["repos", "issues", "pull_requests", "actions"])
+            for toolset_id, checkbox in self.github_toolset_checkboxes.items():
+                checkbox.setChecked(toolset_id in toolsets)
+
+            if pat and config.get("enabled"):
+                self.mcp_status.setText("GitHub MCP configured")
+                self.mcp_status.setStyleSheet(f"color: {Theme.SUCCESS}; font-size: 11px;")
+        except Exception as e:
+            pass
+
+    def _on_github_mcp_toggled(self, enabled: bool):
+        """Handle GitHub MCP toggle."""
+        pass  # Settings are saved when Save button is clicked
+
+    def _save_github_mcp(self):
+        """Save GitHub MCP settings."""
+        pat = self.github_pat_input.input_field.text().strip()
+        enabled = self.github_mcp_toggle.isChecked()
+
+        if enabled and not pat:
+            self.mcp_status.setText("Please enter a GitHub Personal Access Token")
+            self.mcp_status.setStyleSheet(f"color: {Theme.ERROR}; font-size: 11px;")
+            return
+
+        # Get enabled toolsets
+        toolsets = [
+            toolset_id for toolset_id, checkbox in self.github_toolset_checkboxes.items()
+            if checkbox.isChecked()
+        ]
+
+        try:
+            from circuit_agent.config import save_github_pat, save_github_mcp_config
+
+            # Save PAT if provided
+            if pat:
+                success, method = save_github_pat(pat)
+                if not success:
+                    self.mcp_status.setText("Failed to save PAT")
+                    self.mcp_status.setStyleSheet(f"color: {Theme.ERROR}; font-size: 11px;")
+                    return
+
+            # Save MCP config
+            save_github_mcp_config(enabled=enabled, toolsets=toolsets)
+
+            status_msg = "GitHub MCP settings saved"
+            if enabled:
+                status_msg += f" ({len(toolsets)} toolsets)"
+            self.mcp_status.setText(status_msg)
+            self.mcp_status.setStyleSheet(f"color: {Theme.SUCCESS}; font-size: 11px;")
+
+            # Emit signal so AgentWorker can reinitialize MCP
+            self.settings_changed.emit({"github_mcp_updated": True})
+
+        except Exception as e:
+            self.mcp_status.setText(f"Error: {str(e)[:40]}")
+            self.mcp_status.setStyleSheet(f"color: {Theme.ERROR}; font-size: 11px;")
+
+    def _test_github_mcp(self):
+        """Test GitHub MCP connection."""
+        pat = self.github_pat_input.input_field.text().strip()
+
+        if not pat:
+            self.mcp_status.setText("Please enter a GitHub PAT first")
+            self.mcp_status.setStyleSheet(f"color: {Theme.ERROR}; font-size: 11px;")
+            return
+
+        # Basic PAT validation
+        if not (pat.startswith("ghp_") or pat.startswith("github_pat_")):
+            self.mcp_status.setText("Invalid PAT format (should start with ghp_ or github_pat_)")
+            self.mcp_status.setStyleSheet(f"color: {Theme.ERROR}; font-size: 11px;")
+            return
+
+        self.mcp_status.setText("Testing GitHub connection...")
+        self.mcp_status.setStyleSheet(f"color: {Theme.WARNING}; font-size: 11px;")
+
+        def test_thread():
+            try:
+                from circuit_agent.config import ssl_config
+                import httpx
+
+                # Test GitHub API with the PAT
+                with httpx.Client(verify=ssl_config.get_verify_param(), timeout=10.0) as client:
+                    response = client.get(
+                        "https://api.github.com/user",
+                        headers={
+                            "Authorization": f"Bearer {pat}",
+                            "Accept": "application/vnd.github+json",
+                        }
+                    )
+                    if response.status_code == 200:
+                        user = response.json()
+                        username = user.get("login", "Unknown")
+                        return True, f"Connected as @{username}"
+                    elif response.status_code == 401:
+                        return False, "Invalid or expired token"
+                    else:
+                        return False, f"Error: {response.status_code}"
+            except httpx.TimeoutException:
+                return False, "Connection timed out"
+            except httpx.ConnectError as e:
+                return False, f"Connection failed: {str(e)[:30]}"
+            except Exception as e:
+                return False, f"Error: {str(e)[:40]}"
+
+        import threading
+        def run_test():
+            success, message = test_thread()
+            QTimer.singleShot(0, lambda: self._show_mcp_result(success, message))
+
+        thread = threading.Thread(target=run_test, daemon=True)
+        thread.start()
+
+    def _show_mcp_result(self, success: bool, message: str = ""):
+        if success:
+            self.mcp_status.setText(message or "Connected")
+            self.mcp_status.setStyleSheet(f"color: {Theme.SUCCESS}; font-size: 11px;")
+        else:
+            self.mcp_status.setText(message or "Connection failed")
+            self.mcp_status.setStyleSheet(f"color: {Theme.ERROR}; font-size: 11px;")
 
     # =========================================================================
     # Provider Selection Methods
@@ -5448,6 +5876,27 @@ class CodeEditor(QPlainTextEdit):
 
     def load_file(self, path: Path):
         try:
+            # File size protection
+            file_size = path.stat().st_size
+            size_mb = file_size / (1024 * 1024)
+
+            if size_mb > 50:
+                self.setPlainText(f"File too large to open ({size_mb:.1f} MB)\n\nMaximum file size: 50 MB")
+                return
+
+            if size_mb > 5:
+                # Show warning for large files
+                from PySide6.QtWidgets import QMessageBox
+                reply = QMessageBox.warning(
+                    self,
+                    "Large File Warning",
+                    f"This file is {size_mb:.1f} MB.\n\nLarge files may slow down the editor.\n\nDo you want to continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
             content = path.read_text()
             self.setPlainText(content)
             self.current_file = path
@@ -6656,6 +7105,115 @@ class EditorTabs(QTabWidget):
 
         self.tabCloseRequested.connect(self._on_close_requested)
 
+        # Enable middle-click to close tabs
+        self.tabBar().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Handle middle-click to close tabs and context menu."""
+        if obj == self.tabBar():
+            if event.type() == event.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.MiddleButton:
+                    tab_index = self.tabBar().tabAt(event.pos())
+                    if tab_index >= 0:
+                        self._on_close_requested(tab_index)
+                        return True
+            elif event.type() == event.Type.ContextMenu:
+                tab_index = self.tabBar().tabAt(event.pos())
+                if tab_index >= 0:
+                    self._show_tab_context_menu(tab_index, event.globalPos())
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _show_tab_context_menu(self, index: int, pos):
+        """Show context menu for tab."""
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {Theme.BG_SECONDARY};
+                color: {Theme.TEXT_PRIMARY};
+                border: 1px solid {Theme.BORDER};
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 24px 6px 12px;
+            }}
+            QMenu::item:selected {{
+                background: {Theme.BG_SELECTED};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {Theme.BORDER};
+                margin: 4px 8px;
+            }}
+        """)
+
+        widget = self.widget(index)
+        file_path = getattr(widget, 'current_file', None)
+        file_name = self._original_names.get(index, 'File')
+
+        # Close actions
+        close_action = menu.addAction("Close")
+        close_action.triggered.connect(lambda: self._on_close_requested(index))
+
+        close_others_action = menu.addAction("Close Others")
+        close_others_action.triggered.connect(lambda: self._close_others(index))
+        close_others_action.setEnabled(self.count() > 1)
+
+        close_right_action = menu.addAction("Close to the Right")
+        close_right_action.triggered.connect(lambda: self._close_to_right(index))
+        close_right_action.setEnabled(index < self.count() - 1)
+
+        close_all_action = menu.addAction("Close All")
+        close_all_action.triggered.connect(self._close_all)
+
+        menu.addSeparator()
+
+        # File actions
+        if file_path:
+            copy_path_action = menu.addAction("Copy Path")
+            copy_path_action.triggered.connect(lambda: self._copy_path(file_path))
+
+            copy_name_action = menu.addAction("Copy File Name")
+            copy_name_action.triggered.connect(lambda: QApplication.clipboard().setText(file_name))
+
+            menu.addSeparator()
+
+            reveal_action = menu.addAction("Reveal in File Explorer")
+            reveal_action.triggered.connect(lambda: self._reveal_in_explorer(file_path))
+
+        menu.exec(pos)
+
+    def _close_others(self, keep_index: int):
+        """Close all tabs except the specified one."""
+        for i in range(self.count() - 1, -1, -1):
+            if i != keep_index:
+                self._on_close_requested(i)
+
+    def _close_to_right(self, index: int):
+        """Close all tabs to the right of the specified one."""
+        for i in range(self.count() - 1, index, -1):
+            self._on_close_requested(i)
+
+    def _close_all(self):
+        """Close all tabs."""
+        for i in range(self.count() - 1, -1, -1):
+            self._on_close_requested(i)
+
+    def _copy_path(self, path: Path):
+        """Copy file path to clipboard."""
+        QApplication.clipboard().setText(str(path))
+        ToastNotification.success("Path copied to clipboard", self.window())
+
+    def _reveal_in_explorer(self, path: Path):
+        """Reveal file in system file explorer."""
+        import subprocess
+        if sys.platform == "darwin":
+            subprocess.run(["open", "-R", str(path)])
+        elif sys.platform == "win32":
+            subprocess.run(["explorer", "/select,", str(path)])
+        else:
+            subprocess.run(["xdg-open", str(path.parent)])
+
     def _setup_close_buttons(self):
         """Setup close buttons for existing tabs."""
         for i in range(self.count()):
@@ -6876,6 +7434,7 @@ class TerminalPanel(QWidget):
     """Professional integrated terminal with persistent shell session."""
 
     command_executed = Signal(str, int)  # command, exit_code
+    MAX_BUFFER_LINES = 10000  # Prevent memory issues with large output
 
     def __init__(self, working_dir: str = None, parent=None):
         super().__init__(parent)
@@ -7229,6 +7788,23 @@ class TerminalPanel(QWidget):
 
         self.output.setTextCursor(cursor)
         self.output.ensureCursorVisible()
+
+        # Limit buffer size to prevent memory issues
+        self._prune_buffer()
+
+    def _prune_buffer(self):
+        """Remove oldest lines if buffer exceeds maximum."""
+        doc = self.output.document()
+        line_count = doc.blockCount()
+        if line_count > self.MAX_BUFFER_LINES:
+            # Remove oldest lines
+            cursor = self.output.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            lines_to_remove = line_count - self.MAX_BUFFER_LINES
+            for _ in range(lines_to_remove):
+                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+            cursor.deleteChar()  # Remove trailing newline
 
     def _on_shell_finished(self, exit_code: int, exit_status):
         """Handle shell process exit."""
@@ -7979,6 +8555,8 @@ class ClaudeCodePanel(QWidget):
         self._text_buffer = ""
         self._in_code_block = False
         self._code_block_lang = ""
+        self._code_blocks: List[str] = []  # Store code block contents for copy
+        self._current_code_block = ""  # Current code block being accumulated
 
         # Timer for status updates
         self._status_timer = QTimer(self)
@@ -8025,6 +8603,8 @@ class ClaudeCodePanel(QWidget):
             }}
         """)
         self.output.setAcceptRichText(True)
+        self.output.setMouseTracking(True)
+        self.output.mousePressEvent = self._on_output_click
         layout.addWidget(self.output)
 
         # Status bar (visible while processing)
@@ -8113,6 +8693,7 @@ class ClaudeCodePanel(QWidget):
     def start_claude(self):
         """Initialize Claude Code panel (ready for messages)."""
         self.output.clear()
+        self._code_blocks = []  # Reset code blocks for copy
         self._is_first_message = True
         self.status_label.setText("Claude Code - Ready")
         self.status_dot.set_color(Theme.SUCCESS)
@@ -8131,6 +8712,7 @@ class ClaudeCodePanel(QWidget):
         self._session_id = None
         self._is_first_message = True
         self.output.clear()
+        self._code_blocks = []  # Reset code blocks for copy
         self.status_label.setText("Claude Code - Ready")
         self.status_dot.set_color(Theme.SUCCESS)
         self._append_output("New session started. Type a message to begin.\n", Theme.TEXT_MUTED)
@@ -8205,26 +8787,33 @@ class ClaudeCodePanel(QWidget):
         # Handle code block start/end
         if stripped.startswith('```'):
             if self._in_code_block:
-                # End code block
+                # End code block - save content and add to list
+                self._code_blocks.append(self._current_code_block)
+                self._current_code_block = ""
                 self._in_code_block = False
                 self._code_block_lang = ""
                 self._append_raw_html(f'</pre></div>')
             else:
                 # Start code block
                 self._in_code_block = True
+                self._current_code_block = ""
                 self._code_block_lang = stripped[3:].strip()
-                lang_label = f' <span style="color: {Theme.TEXT_MUTED}; font-size: 10px;">{self._code_block_lang}</span>' if self._code_block_lang else ''
+                lang_label = f'<span style="color: {Theme.TEXT_MUTED}; font-size: 10px;">{self._code_block_lang}</span>' if self._code_block_lang else ''
+                code_block_id = len(self._code_blocks)
+                copy_btn = f'<a href="copy://{code_block_id}" style="color: {Theme.ACCENT_BLUE}; text-decoration: none; font-size: 10px;">Copy</a>'
                 self._append_raw_html(
                     f'<div style="background: {Theme.BG_DARK}; border: 1px solid {Theme.BORDER}; '
                     f'border-radius: 4px; margin: 8px 0; padding: 0;">'
                     f'<div style="background: {Theme.BG_TERTIARY}; padding: 4px 8px; '
-                    f'border-bottom: 1px solid {Theme.BORDER}; font-size: 11px;">{lang_label}</div>'
+                    f'border-bottom: 1px solid {Theme.BORDER}; font-size: 11px; display: flex; justify-content: space-between;">'
+                    f'{lang_label}<span style="margin-left: auto;">{copy_btn}</span></div>'
                     f'<pre style="margin: 0; padding: 8px; overflow-x: auto; font-family: Menlo, monospace; font-size: 12px;">'
                 )
             return
 
-        # Inside code block - just append with syntax coloring
+        # Inside code block - accumulate content and append with syntax coloring
         if self._in_code_block:
+            self._current_code_block += line
             escaped = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             self._append_raw_html(f'<span style="color: {Theme.TEXT_PRIMARY};">{escaped}</span>')
             return
@@ -8256,9 +8845,13 @@ class ClaudeCodePanel(QWidget):
         if text.startswith('  - ') or text.startswith('  * '):
             return f'&nbsp;&nbsp;<span style="color: {Theme.TEXT_MUTED};">-</span> {self._format_inline(text[4:])}'
 
-        # Numbered lists
-        if len(text) > 2 and text[0].isdigit() and text[1] == '.' and text[2] == ' ':
-            return f'<span style="color: {Theme.ACCENT_BLUE};">{text[0]}.</span> {self._format_inline(text[3:])}'
+        # Numbered lists (supports multi-digit numbers like 10, 11, etc.)
+        import re
+        num_match = re.match(r'^(\d+)\.\s', text)
+        if num_match:
+            num = num_match.group(1)
+            rest = text[num_match.end():]
+            return f'<span style="color: {Theme.ACCENT_BLUE};">{num}.</span> {self._format_inline(rest)}'
 
         # Blockquotes
         if text.startswith('> '):
@@ -8316,6 +8909,23 @@ class ClaudeCodePanel(QWidget):
         cursor.insertHtml(html)
         self.output.setTextCursor(cursor)
         self.output.ensureCursorVisible()
+
+    def _on_output_click(self, event):
+        """Handle clicks on output area, including copy links."""
+        cursor = self.output.cursorForPosition(event.pos())
+        anchor = cursor.charFormat().anchorHref()
+        if anchor and anchor.startswith("copy://"):
+            try:
+                block_id = int(anchor.replace("copy://", ""))
+                if 0 <= block_id < len(self._code_blocks):
+                    code = self._code_blocks[block_id]
+                    QApplication.clipboard().setText(code)
+                    # Show toast notification
+                    ToastNotification.success("Code copied to clipboard", self.window())
+            except (ValueError, IndexError):
+                pass
+        # Call original handler for selection etc.
+        QTextEdit.mousePressEvent(self.output, event)
 
     @Slot(dict)
     def _on_tool_start(self, event: dict):
@@ -8567,6 +9177,8 @@ class CiscoCodePanel(QWidget):
         self._text_buffer = ""
         self._in_code_block = False
         self._code_block_lang = ""
+        self._code_blocks: List[str] = []  # Store code block contents for copy
+        self._current_code_block = ""  # Current code block being accumulated
 
         # Timer for status updates
         self._status_timer = QTimer(self)
@@ -8613,6 +9225,8 @@ class CiscoCodePanel(QWidget):
             }}
         """)
         self.output.setAcceptRichText(True)
+        self.output.setMouseTracking(True)
+        self.output.mousePressEvent = self._on_output_click
         layout.addWidget(self.output)
 
         # Status bar (visible while processing)
@@ -8711,6 +9325,7 @@ class CiscoCodePanel(QWidget):
     def _restart(self):
         """Start a new conversation."""
         self.output.clear()
+        self._code_blocks = []  # Reset code blocks for copy
         self._text_buffer = ""
         self._in_code_block = False
         self._total_tokens = 0
@@ -8728,7 +9343,7 @@ class CiscoCodePanel(QWidget):
         self.input_field.clear()
 
         # Show user message with gap before response
-        self._append_output(f"\n> {text}\n\n", Theme.CLAUDE_COLOR)
+        self._append_output(f"\n> {text}\n\n", Theme.CIRCUIT_COLOR)
 
         # Update status
         self.status_label.setText("Circuit AI - Thinking...")
@@ -8843,26 +9458,33 @@ class CiscoCodePanel(QWidget):
         # Handle code block start/end
         if stripped.startswith('```'):
             if self._in_code_block:
-                # End code block
+                # End code block - save content and add to list
+                self._code_blocks.append(self._current_code_block)
+                self._current_code_block = ""
                 self._in_code_block = False
                 self._code_block_lang = ""
                 self._append_raw_html(f'</pre></div>')
             else:
                 # Start code block
                 self._in_code_block = True
+                self._current_code_block = ""
                 self._code_block_lang = stripped[3:].strip()
-                lang_label = f' <span style="color: {Theme.TEXT_MUTED}; font-size: 10px;">{self._code_block_lang}</span>' if self._code_block_lang else ''
+                lang_label = f'<span style="color: {Theme.TEXT_MUTED}; font-size: 10px;">{self._code_block_lang}</span>' if self._code_block_lang else ''
+                code_block_id = len(self._code_blocks)
+                copy_btn = f'<a href="copy://{code_block_id}" style="color: {Theme.ACCENT_BLUE}; text-decoration: none; font-size: 10px;">Copy</a>'
                 self._append_raw_html(
                     f'<div style="background: {Theme.BG_DARK}; border: 1px solid {Theme.BORDER}; '
                     f'border-radius: 4px; margin: 8px 0; padding: 0;">'
                     f'<div style="background: {Theme.BG_TERTIARY}; padding: 4px 8px; '
-                    f'border-bottom: 1px solid {Theme.BORDER}; font-size: 11px;">{lang_label}</div>'
+                    f'border-bottom: 1px solid {Theme.BORDER}; font-size: 11px; display: flex; justify-content: space-between;">'
+                    f'{lang_label}<span style="margin-left: auto;">{copy_btn}</span></div>'
                     f'<pre style="margin: 0; padding: 8px; overflow-x: auto; font-family: Menlo, monospace; font-size: 12px;">'
                 )
             return
 
-        # Inside code block - just append with syntax coloring
+        # Inside code block - accumulate content and append with syntax coloring
         if self._in_code_block:
+            self._current_code_block += line
             escaped = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             self._append_raw_html(f'<span style="color: {Theme.TEXT_PRIMARY};">{escaped}</span>')
             return
@@ -8890,17 +9512,21 @@ class CiscoCodePanel(QWidget):
 
         # Bullet points
         if text.startswith('- ') or text.startswith('* '):
-            return f'<span style="color: {Theme.ACCENT_BLUE};">-</span> {self._format_inline(text[2:])}'
+            return f'<span style="color: {Theme.CIRCUIT_COLOR};">-</span> {self._format_inline(text[2:])}'
         if text.startswith('  - ') or text.startswith('  * '):
             return f'&nbsp;&nbsp;<span style="color: {Theme.TEXT_MUTED};">-</span> {self._format_inline(text[4:])}'
 
-        # Numbered lists
-        if len(text) > 2 and text[0].isdigit() and text[1] == '.' and text[2] == ' ':
-            return f'<span style="color: {Theme.ACCENT_BLUE};">{text[0]}.</span> {self._format_inline(text[3:])}'
+        # Numbered lists (supports multi-digit numbers like 10, 11, etc.)
+        import re
+        num_match = re.match(r'^(\d+)\.\s', text)
+        if num_match:
+            num = num_match.group(1)
+            rest = text[num_match.end():]
+            return f'<span style="color: {Theme.CIRCUIT_COLOR};">{num}.</span> {self._format_inline(rest)}'
 
         # Blockquotes
         if text.startswith('> '):
-            return f'<span style="color: {Theme.TEXT_MUTED}; border-left: 2px solid {Theme.ACCENT_BLUE}; padding-left: 8px; display: inline-block;">{self._format_inline(text[2:])}</span>'
+            return f'<span style="color: {Theme.TEXT_MUTED}; border-left: 2px solid {Theme.CIRCUIT_COLOR}; padding-left: 8px; display: inline-block;">{self._format_inline(text[2:])}</span>'
 
         # Regular text with inline formatting
         return self._format_inline(text)
@@ -8954,6 +9580,23 @@ class CiscoCodePanel(QWidget):
         cursor.insertHtml(html)
         self.output.setTextCursor(cursor)
         self.output.ensureCursorVisible()
+
+    def _on_output_click(self, event):
+        """Handle clicks on output area, including copy links."""
+        cursor = self.output.cursorForPosition(event.pos())
+        anchor = cursor.charFormat().anchorHref()
+        if anchor and anchor.startswith("copy://"):
+            try:
+                block_id = int(anchor.replace("copy://", ""))
+                if 0 <= block_id < len(self._code_blocks):
+                    code = self._code_blocks[block_id]
+                    QApplication.clipboard().setText(code)
+                    # Show toast notification
+                    ToastNotification.success("Code copied to clipboard", self.window())
+            except (ValueError, IndexError):
+                pass
+        # Call original handler for selection etc.
+        QTextEdit.mousePressEvent(self.output, event)
 
     def _update_status_display(self):
         """Update the status bar display (called by timer)."""
@@ -9024,6 +9667,7 @@ class AgentWorker(QObject):
     tool_call = Signal(str, str, str)
     stats_updated = Signal(int, float)
     confirmation_needed = Signal(object)  # ConfirmationRequest
+    mcp_status = Signal(bool, str, int)  # connected, server_id, tool_count
 
     def __init__(self):
         super().__init__()
@@ -9237,6 +9881,56 @@ class AgentWorker(QObject):
                 self.connected.emit(False, str(e))
 
         threading.Thread(target=do_test, daemon=True).start()
+
+    def reinit_mcp(self):
+        """Reinitialize MCP servers after settings change."""
+        if self.provider != "cisco" or not self.service:
+            return
+
+        def do_reinit():
+            try:
+                from circuit_agent.config import load_github_pat, load_github_mcp_config
+                from circuit_agent.mcp.servers.github import GitHubMCPServer
+
+                # Get current config
+                github_config = load_github_mcp_config()
+                github_pat = load_github_pat()
+
+                if not github_config.get("enabled") or not github_pat:
+                    # Disconnect if disabled
+                    if self.service and hasattr(self.service, '_agent') and self.service._agent:
+                        self.service._agent.disconnect_mcp("github")
+                    self.mcp_status.emit(False, "github", 0)
+                    return
+
+                # Connect to GitHub MCP
+                if self.service and hasattr(self.service, '_agent') and self.service._agent:
+                    agent = self.service._agent
+                    toolsets = github_config.get("toolsets", [])
+
+                    # Disconnect existing connection first
+                    agent.mcp_manager.disconnect("github")
+
+                    # Create new config
+                    config = GitHubMCPServer.get_remote_config(
+                        pat=github_pat,
+                        toolsets=toolsets,
+                        enabled=True
+                    )
+
+                    # Connect
+                    success = agent.mcp_manager.connect(config)
+                    if success:
+                        agent._mcp_tools_cache = agent.mcp_manager.list_tools()
+                        tool_count = len(agent._mcp_tools_cache)
+                        self.mcp_status.emit(True, "github", tool_count)
+                    else:
+                        self.mcp_status.emit(False, "github", 0)
+
+            except Exception as e:
+                self.mcp_status.emit(False, "github", 0)
+
+        threading.Thread(target=do_reinit, daemon=True).start()
 
     @Slot(str)
     def send_message(self, text: str):
@@ -9664,6 +10358,7 @@ class CircuitIDEWindow(QMainWindow):
         self.agent_panel.clear_chat_requested.connect(self._new_chat)
 
         self.git_panel = GitPanel()
+        self.git_panel.git_operation_completed.connect(self._update_git_branch)
 
         self.settings_panel = SettingsPanel()
         self.settings_panel.settings_changed.connect(self._on_settings_changed)
@@ -9746,6 +10441,11 @@ class CircuitIDEWindow(QMainWindow):
             wrapper_layout.addWidget(self.enhanced_status)
 
             self.setCentralWidget(wrapper)
+
+        # Timer to periodically update git branch (every 30 seconds)
+        self._git_branch_timer = QTimer(self)
+        self._git_branch_timer.timeout.connect(self._update_git_branch)
+        self._git_branch_timer.start(30000)  # 30 seconds
 
     def _setup_menu(self):
         menu = self.menuBar()
@@ -10050,10 +10750,24 @@ class CircuitIDEWindow(QMainWindow):
             except ImportError:
                 provider = "cisco"
 
-        # Clean up any existing worker
+        # Clean up any existing worker and thread
         if self.worker:
+            try:
+                # Disconnect old signals first
+                self.send_message_signal.disconnect(self.worker.send_message)
+            except (RuntimeError, TypeError):
+                pass
             if hasattr(self.worker, 'stop_event_loop'):
                 self.worker.stop_event_loop()
+            self.worker = None
+
+        if hasattr(self, 'worker_thread') and self.worker_thread:
+            try:
+                self.worker_thread.quit()
+                self.worker_thread.wait(1000)  # Wait up to 1 second
+            except (RuntimeError, Exception):
+                pass
+            self.worker_thread = None
 
         self.worker_thread = QThread()
         self.worker = AgentWorker()
@@ -10207,6 +10921,7 @@ class CircuitIDEWindow(QMainWindow):
                 self.settings_panel.provider_changed.connect(self._on_provider_changed)
             elif panel_name == "git":
                 self.git_panel = GitPanel()
+                self.git_panel.git_operation_completed.connect(self._update_git_branch)
             elif panel_name == "agent":
                 self.agent_panel = AgentControlPanel()
                 self.agent_panel.reconnect_requested.connect(self._reconnect)
@@ -10387,58 +11102,74 @@ class CircuitIDEWindow(QMainWindow):
         if self.worker and "model" in settings:
             self.worker.set_model(settings["model"])
 
+        # Handle GitHub MCP settings update
+        if self.worker and settings.get("github_mcp_updated"):
+            self.worker.reinit_mcp()
+
     @Slot(str)
     def _on_provider_changed(self, provider: str):
         """Handle AI provider change - swap panels and reinitialize."""
-        provider_name = "Claude Code" if provider == "anthropic" else "Cisco AI"
-        self.enhanced_status.set_message(f"Switching to {provider_name}...")
+        try:
+            provider_name = "Claude Code" if provider == "anthropic" else "Cisco AI"
+            self.enhanced_status.set_message(f"Switching to {provider_name}...")
 
-        # Update chat message colors based on provider
-        if provider == "anthropic":
-            OutputEntry.set_provider("claude")
-        else:
-            OutputEntry.set_provider("circuit")
+            # Update chat message colors based on provider
+            if provider == "anthropic":
+                OutputEntry.set_provider("claude")
+            else:
+                OutputEntry.set_provider("circuit")
 
-        if provider == "anthropic":
-            # Switch to Claude Code panel
-            self.chat_stack.setCurrentIndex(1)
+            if provider == "anthropic":
+                # Switch to Claude Code panel
+                self.chat_stack.setCurrentIndex(1)
 
-            # Set working directory and start Claude Code
-            if self.project_dir:
-                self.claude_code_panel.set_working_dir(str(self.project_dir))
-                self.claude_code_panel.start_claude()
+                # Stop the Cisco agent worker if running
+                if self.worker:
+                    try:
+                        if hasattr(self.worker, 'stop_event_loop'):
+                            self.worker.stop_event_loop()
+                    except Exception:
+                        pass
 
-            # Update status
-            self.enhanced_status.set_agent_status(True, "Claude Code")
-            self.agent_panel.set_connected(True, str(self.project_dir) if self.project_dir else None)
+                # Set working directory and start Claude Code
+                if self.project_dir:
+                    try:
+                        self.claude_code_panel.set_working_dir(str(self.project_dir))
+                        self.claude_code_panel.start_claude()
+                    except Exception:
+                        pass
 
-            # Stop the Cisco agent worker if running
-            if self.worker:
-                if hasattr(self.worker, 'stop_event_loop'):
-                    self.worker.stop_event_loop()
-        else:
-            # Switch to Cisco AI chat panel
-            self.chat_stack.setCurrentIndex(0)
+                # Update status
+                try:
+                    self.enhanced_status.set_agent_status(True, "Claude Code")
+                    self.agent_panel.set_connected(True, str(self.project_dir) if self.project_dir else None)
+                except Exception:
+                    pass
+            else:
+                # Switch to Cisco AI chat panel
+                self.chat_stack.setCurrentIndex(0)
 
-            # Stop Claude Code if running
-            try:
-                self.claude_code_panel.stop_claude()
-            except Exception:
-                pass
+                # Stop Claude Code if running
+                try:
+                    self.claude_code_panel.stop_claude()
+                except Exception:
+                    pass
 
-            # Clear and reinitialize Cisco agent
-            try:
-                self.cisco_code_panel.set_connected(False)
-                self.agent_panel.set_connected(False, None)
-                self.agent_panel.reset_session()  # Reset stats for new session
-                self.cisco_code_panel.clear()
-                self.cisco_code_panel._append_output(f"Switching to {provider_name}...\n", Theme.TEXT_MUTED)
-            except Exception:
-                pass
+                # Clear and reinitialize Cisco agent
+                try:
+                    self.cisco_code_panel.set_connected(False)
+                    self.agent_panel.set_connected(False, None)
+                    self.agent_panel.reset_session()  # Reset stats for new session
+                    self.cisco_code_panel.clear()
+                    self.cisco_code_panel._append_output(f"Switching to {provider_name}...\n", Theme.TEXT_MUTED)
+                except Exception:
+                    pass
 
-            # Reinitialize the Cisco agent
-            if self.project_dir:
-                self._init_agent(provider)
+                # Reinitialize the Cisco agent
+                if self.project_dir:
+                    self._init_agent(provider)
+        except Exception as e:
+            print(f"Error switching provider: {e}")
 
     def _on_model_changed(self, model: str):
         if self.worker:
