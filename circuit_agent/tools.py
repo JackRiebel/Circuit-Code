@@ -4,6 +4,7 @@ Tool definitions and executor for Circuit Agent.
 
 import os
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -11,6 +12,28 @@ from typing import Dict, List, Tuple, Any, Optional
 from difflib import get_close_matches
 
 from .config import DANGEROUS_PATTERNS
+
+# Shell metacharacters that require shell=True
+SHELL_METACHARACTERS = set('|;&$`><(){}[]!*?~')
+
+def _needs_shell(command: str) -> bool:
+    """Check if command contains shell metacharacters requiring shell=True."""
+    for char in command:
+        if char in SHELL_METACHARACTERS:
+            return True
+    return False
+
+def _sanitize_command(command: str) -> str:
+    """Sanitize command string to prevent injection attacks."""
+    dangerous_subst = [
+        r'\$\([^)]+\)',      # $(command)
+        r'`[^`]+`',          # `command`
+        r'\$\{[^}]+\}',      # ${variable} expansion
+    ]
+    for pattern in dangerous_subst:
+        if re.search(pattern, command):
+            raise ValueError(f"Command substitution not allowed for security reasons")
+    return command
 
 
 # Tool definitions in OpenAI function calling format
@@ -629,14 +652,30 @@ class ToolExecutor:
         timeout = min(max(timeout, 5), 300)
 
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=self.working_dir,
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
+            # Sanitize command to block injection attacks
+            command = _sanitize_command(command)
+
+            # Use shell=False when possible for security
+            if _needs_shell(command):
+                # Command needs shell features - use shell but command is sanitized
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=self.working_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+            else:
+                # Safe to use list form without shell
+                result = subprocess.run(
+                    shlex.split(command),
+                    shell=False,
+                    cwd=self.working_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
 
             output = ""
             if result.stdout:

@@ -4,12 +4,40 @@ File operation tools for Circuit Agent.
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from difflib import get_close_matches
 
 from ..config import DANGEROUS_PATTERNS
+
+# Shell metacharacters that require shell=True
+SHELL_METACHARACTERS = set('|;&$`><(){}[]!*?~')
+
+def _needs_shell(command: str) -> bool:
+    """Check if command contains shell metacharacters requiring shell=True."""
+    # Check for shell metacharacters (excluding quotes which shlex handles)
+    for char in command:
+        if char in SHELL_METACHARACTERS:
+            return True
+    return False
+
+def _sanitize_command(command: str) -> str:
+    """Sanitize command string to prevent injection attacks."""
+    # Block command substitution patterns
+    dangerous_subst = [
+        r'\$\([^)]+\)',      # $(command)
+        r'`[^`]+`',          # `command`
+        r'\$\{[^}]+\}',      # ${variable} expansion
+    ]
+    for pattern in dangerous_subst:
+        if re.search(pattern, command):
+            raise ValueError(f"Command substitution not allowed for security reasons")
+    return command
+
+if TYPE_CHECKING:
+    from ..errors import SmartError
 
 
 # Tool definitions in OpenAI function calling format
@@ -178,9 +206,10 @@ FILE_TOOLS = [
 class FileTools:
     """File operation tool implementations."""
 
-    def __init__(self, working_dir: str, backup_manager=None):
+    def __init__(self, working_dir: str, backup_manager=None, smart_error: Optional['SmartError'] = None):
         self.working_dir = os.path.realpath(os.path.abspath(working_dir))
         self.backup_manager = backup_manager
+        self.smart_error = smart_error
 
     def _safe_path(self, path: str) -> str:
         """Ensure path is within working directory (prevents path traversal attacks)."""
@@ -232,6 +261,10 @@ class FileTools:
             return f"Error: {e}"
 
         if not os.path.exists(full_path):
+            # Use SmartError for helpful suggestions
+            if self.smart_error:
+                return self.smart_error.file_not_found(path, "read")
+            # Fallback to basic error handling
             parent = os.path.dirname(full_path) or self.working_dir
             if os.path.isdir(parent):
                 files = [f for f in os.listdir(parent) if os.path.isfile(os.path.join(parent, f))]
@@ -321,6 +354,8 @@ class FileTools:
             return f"Error: {e}"
 
         if not os.path.exists(full_path):
+            if self.smart_error:
+                return self.smart_error.file_not_found(path, "edit")
             return f"Error: File not found: {path}\nTip: Use read_file first to verify the file exists and see its contents."
 
         try:
@@ -328,6 +363,10 @@ class FileTools:
                 content = f.read()
 
             if old_text not in content:
+                # Use SmartError for detailed suggestions
+                if self.smart_error:
+                    return self.smart_error.text_not_found(path, old_text, content)
+                # Fallback
                 similar = self._find_similar_text(content, old_text)
                 error_msg = f"Error: Could not find the specified text in {path}"
                 error_msg += "\n\nThe text you're trying to replace wasn't found."
@@ -340,6 +379,9 @@ class FileTools:
 
             count = content.count(old_text)
             if count > 1:
+                # Use SmartError for multiple matches
+                if self.smart_error:
+                    return self.smart_error.multiple_matches(path, old_text, content, count)
                 return f"Error: Found {count} matches in {path}.\nTip: Include more surrounding context to make the match unique."
 
             if self.backup_manager:
@@ -454,14 +496,30 @@ class FileTools:
         timeout = min(max(timeout, 5), 300)
 
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=self.working_dir,
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
+            # Sanitize command to block injection attacks
+            command = _sanitize_command(command)
+
+            # Use shell=False when possible for security
+            if _needs_shell(command):
+                # Command needs shell features - use shell but command is sanitized
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=self.working_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+            else:
+                # Safe to use list form without shell
+                result = subprocess.run(
+                    shlex.split(command),
+                    shell=False,
+                    cwd=self.working_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
 
             output = ""
             if result.stdout:
@@ -477,8 +535,15 @@ class FileTools:
             if len(output) > 5000:
                 output = output[:5000] + "\n... (output truncated)"
 
-            status = "succeeded" if result.returncode == 0 else f"failed (exit code {result.returncode})"
-            return f"Command {status}:\n{output}"
+            if result.returncode == 0:
+                return f"Command succeeded:\n{output}"
+            else:
+                # Use SmartError for failed commands
+                if self.smart_error:
+                    return self.smart_error.command_failed(
+                        command, result.returncode, result.stdout, result.stderr
+                    )
+                return f"Command failed (exit code {result.returncode}):\n{output}"
 
         except subprocess.TimeoutExpired:
             return f"Error: Command timed out after {timeout} seconds\nTip: Use timeout parameter for long-running commands."

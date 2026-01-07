@@ -1,9 +1,11 @@
 """
-CLI interface for Circuit Agent v3.0.
-Main loop, slash commands, and user interaction.
+CLI interface for Circuit Agent v4.0.
+Main loop, slash commands, headless mode, and user interaction.
 """
 
+import argparse
 import asyncio
+import json
 import os
 import sys
 from getpass import getpass
@@ -23,13 +25,10 @@ from .memory import SessionManager
 
 
 async def run_cli(working_dir: Optional[str] = None):
-    """Main CLI entry point."""
-    # Determine working directory
+    """Main CLI entry point for interactive mode."""
+    # Determine working directory if not provided
     if working_dir is None:
-        if len(sys.argv) > 1:
-            working_dir = sys.argv[1]
-        else:
-            working_dir = os.getcwd()
+        working_dir = os.getcwd()
 
     if not os.path.isdir(working_dir):
         print(f"{C.RED}Error: '{working_dir}' is not a valid directory{C.RESET}")
@@ -401,16 +400,254 @@ def handle_command(user_input: str, agent: CircuitAgent, working_dir: str) -> st
             print_info("No compaction needed yet")
         return "continue"
 
+    # v4.0: Cost tracking
+    elif cmd == '/cost':
+        print(f"\n{C.BOLD}Session Cost:{C.RESET}")
+        print(f"  {agent.get_cost_summary()}")
+        return "continue"
+
+    # v4.0: Audit log
+    elif cmd == '/audit':
+        stats = agent.get_audit_stats()
+        if not stats.get("enabled"):
+            print_info("Audit logging is disabled")
+        else:
+            print(f"\n{C.BOLD}Audit Log:{C.RESET}")
+            print(f"  Session: {stats.get('session_id', 'unknown')}")
+            print(f"  Entries: {stats.get('entries', 0)}")
+            print(f"  Log file: {stats.get('log_file', 'N/A')}")
+
+            action_counts = stats.get('action_counts', {})
+            if action_counts:
+                print(f"\n  {C.BOLD}Actions:{C.RESET}")
+                for action, count in sorted(action_counts.items()):
+                    print(f"    {action}: {count}")
+
+            if args and args[0] == 'recent':
+                print(f"\n  {C.BOLD}Recent entries:{C.RESET}")
+                entries = agent.get_recent_audit_entries(5)
+                for entry in entries:
+                    ts = entry.get('timestamp', '')[:19]
+                    action = entry.get('action', 'unknown')
+                    print(f"    [{ts}] {action}")
+        return "continue"
+
+    # v4.0: Thinking mode toggle
+    elif cmd == '/think':
+        if args and args[0] in ('on', 'off'):
+            enabled = args[0] == 'on'
+            agent.set_thinking_mode(enabled)
+            if enabled:
+                print_success("Thinking mode enabled - agent will show reasoning")
+            else:
+                print_success("Thinking mode disabled")
+        else:
+            current = "on" if agent.thinking_mode else "off"
+            print(f"\n{C.BOLD}Thinking Mode:{C.RESET} {current}")
+            print(f"  Use: /think on  or  /think off")
+        return "continue"
+
     # Unknown command
     else:
         print_warning("Unknown command. Type /help for help.")
         return "continue"
 
 
+async def run_headless(
+    prompt: str,
+    working_dir: str,
+    auto_approve: bool = False,
+    output_format: str = "text",
+    model: str = "gpt-4o",
+    max_iterations: int = 25
+) -> int:
+    """
+    Run agent in headless/CI mode with a single prompt.
+
+    Args:
+        prompt: The prompt to execute
+        working_dir: Working directory
+        auto_approve: Skip all confirmations
+        output_format: Output format (text, json, markdown)
+        model: Model to use
+        max_iterations: Maximum tool call iterations
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    # Load credentials
+    client_id, client_secret, app_key = load_credentials()
+
+    if not all([client_id, client_secret, app_key]):
+        if output_format == "json":
+            print(json.dumps({"error": "Missing credentials", "success": False}))
+        else:
+            print("Error: Missing credentials. Run in interactive mode first to set up.", file=sys.stderr)
+        return 1
+
+    # Create agent
+    agent = CircuitAgent(client_id, client_secret, app_key, working_dir)
+    agent.model = model
+    agent.auto_approve = auto_approve
+
+    # Collect output
+    output_parts = []
+
+    def on_content(chunk: str):
+        if output_format == "text":
+            print(chunk, end="", flush=True)
+        else:
+            output_parts.append(chunk)
+
+    try:
+        # Authenticate
+        await agent.get_token()
+
+        # Run the prompt
+        response = await agent.chat(prompt, on_content=on_content if output_format == "text" else None)
+
+        if output_format == "json":
+            result = {
+                "success": True,
+                "response": response,
+                "tokens": agent.get_token_stats(),
+                "cost": agent.get_cost_stats(),
+            }
+            print(json.dumps(result, indent=2))
+        elif output_format == "markdown":
+            print(f"# Agent Response\n\n{response}\n")
+            print(f"---\n*Tokens: {agent.get_token_stats()['session_total']:,} | Cost: ${agent.get_cost_stats()['estimated_cost_usd']:.4f}*")
+        else:
+            # Text format - already printed via on_content
+            if not output_parts:
+                print()  # Newline after streamed content
+            stats = agent.get_token_stats()
+            print(f"\n[Tokens: {stats['session_total']:,} | Cost: ${agent.get_cost_stats()['estimated_cost_usd']:.4f}]", file=sys.stderr)
+
+        return 0
+
+    except Exception as e:
+        if output_format == "json":
+            print(json.dumps({"error": str(e), "success": False}))
+        else:
+            print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        prog="circuit-agent",
+        description="Circuit Agent v4.0 - AI-Powered Coding Assistant",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive mode
+  circuit-agent
+
+  # Headless mode with single prompt
+  circuit-agent -p "Fix all TypeScript errors"
+
+  # Auto-approve all actions (for CI/CD)
+  circuit-agent -p "Run tests and fix failures" --auto-approve
+
+  # JSON output for scripting
+  circuit-agent -p "List all TODO comments" --output json
+
+  # Specify working directory
+  circuit-agent /path/to/project -p "Analyze the codebase"
+"""
+    )
+
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=None,
+        help="Working directory (default: current directory)"
+    )
+
+    parser.add_argument(
+        "-p", "--prompt",
+        help="Single prompt to execute (enables headless mode)"
+    )
+
+    parser.add_argument(
+        "--prompt-file",
+        type=str,
+        help="Read prompt from file"
+    )
+
+    parser.add_argument(
+        "--auto-approve", "-y",
+        action="store_true",
+        help="Auto-approve all actions (skip confirmations)"
+    )
+
+    parser.add_argument(
+        "--output", "-o",
+        choices=["text", "json", "markdown"],
+        default="text",
+        help="Output format (default: text)"
+    )
+
+    parser.add_argument(
+        "--model", "-m",
+        choices=["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"],
+        default="gpt-4o",
+        help="Model to use (default: gpt-4o)"
+    )
+
+    parser.add_argument(
+        "--version", "-v",
+        action="store_true",
+        help="Show version and exit"
+    )
+
+    return parser.parse_args()
+
+
 def main():
     """Entry point for the CLI."""
+    args = parse_args()
+
+    # Handle version flag
+    if args.version:
+        from . import __version__
+        print(f"Circuit Agent v{__version__}")
+        return
+
+    # Determine working directory
+    working_dir = args.directory or os.getcwd()
+    if not os.path.isdir(working_dir):
+        print(f"Error: '{working_dir}' is not a valid directory", file=sys.stderr)
+        sys.exit(1)
+
+    working_dir = os.path.abspath(working_dir)
+
+    # Determine prompt (from -p or --prompt-file)
+    prompt = args.prompt
+    if args.prompt_file:
+        try:
+            prompt = Path(args.prompt_file).read_text().strip()
+        except Exception as e:
+            print(f"Error reading prompt file: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # Run in appropriate mode
     try:
-        asyncio.run(run_cli())
+        if prompt:
+            # Headless mode
+            exit_code = asyncio.run(run_headless(
+                prompt=prompt,
+                working_dir=working_dir,
+                auto_approve=args.auto_approve,
+                output_format=args.output,
+                model=args.model
+            ))
+            sys.exit(exit_code)
+        else:
+            # Interactive mode
+            asyncio.run(run_cli(working_dir))
     except KeyboardInterrupt:
         print(f"\n{C.CYAN}Goodbye!{C.RESET}\n")
 

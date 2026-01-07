@@ -16,13 +16,32 @@ class BackupManager:
     """Manages file backups for undo functionality."""
 
     def __init__(self, working_dir: str):
-        self.working_dir = working_dir
+        self.working_dir = os.path.realpath(os.path.abspath(working_dir))
         self.backups: Dict[str, List[Dict[str, Any]]] = {}
         self.last_modified: Optional[str] = None
 
+    def _safe_path(self, path: str) -> str:
+        """Validate and return safe absolute path within working directory.
+
+        Raises ValueError if path would escape the working directory.
+        """
+        # Normalize and resolve the path
+        full_path = os.path.normpath(os.path.join(self.working_dir, path))
+        real_path = os.path.realpath(full_path)
+
+        # Ensure the resolved path is within working directory
+        if not real_path.startswith(self.working_dir + os.sep) and real_path != self.working_dir:
+            raise ValueError(f"Path traversal detected: {path} resolves outside working directory")
+
+        return real_path
+
     def backup(self, path: str) -> bool:
         """Backup a file before modification. Returns True if backup was created."""
-        full_path = os.path.join(self.working_dir, path)
+        try:
+            full_path = self._safe_path(path)
+        except ValueError:
+            return False
+
         if not os.path.exists(full_path):
             if path not in self.backups:
                 self.backups[path] = []
@@ -71,8 +90,13 @@ class BackupManager:
         if path not in self.backups or not self.backups[path]:
             return False, f"No backup found for {path}"
 
+        # Validate path to prevent traversal attacks
+        try:
+            full_path = self._safe_path(path)
+        except ValueError as e:
+            return False, f"Security error: {e}"
+
         backup_content = self.backups[path][-1]['content']
-        full_path = os.path.join(self.working_dir, path)
 
         try:
             if backup_content is None:

@@ -3,7 +3,10 @@ Git operation tools for Circuit Agent.
 """
 
 import subprocess
-from typing import List, Tuple
+from typing import List, Tuple, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..errors import SmartError
 
 
 # Git tool definitions in OpenAI function calling format
@@ -124,8 +127,9 @@ GIT_TOOLS = [
 class GitTools:
     """Git operation tool implementations."""
 
-    def __init__(self, working_dir: str):
+    def __init__(self, working_dir: str, smart_error: Optional['SmartError'] = None):
         self.working_dir = working_dir
+        self.smart_error = smart_error
 
     def _run_git(self, args: List[str], timeout: int = 30) -> Tuple[bool, str]:
         """Run a git command and return (success, output)."""
@@ -224,6 +228,8 @@ class GitTools:
         # Commit
         success, output = self._run_git(["commit", "-m", message])
         if not success:
+            if self.smart_error:
+                return self.smart_error.git_error("commit", output)
             return f"Error: {output}"
 
         return f"Committed: {output}"

@@ -39,7 +39,7 @@ def print_header(working_dir: str):
     """Print the application header."""
     print(f"""
 {C.CYAN}╔══════════════════════════════════════════════════════════╗
-║               Circuit Agent v3.0                          ║
+║               Circuit Agent v4.0                          ║
 ║         AI-Powered Coding Assistant                       ║
 ╚══════════════════════════════════════════════════════════╝{C.RESET}
 
@@ -51,17 +51,22 @@ def print_welcome():
     """Print the welcome message with available commands."""
     print(f"""
 {C.CYAN}{'─' * 60}{C.RESET}
-{C.BOLD}Circuit Agent v3.0 Ready!{C.RESET}
+{C.BOLD}Circuit Agent v4.0 Ready!{C.RESET}
 
-{C.DIM}Commands:{C.RESET}  /help /save /load /compact /git /auto /quit
+{C.DIM}Commands:{C.RESET}  /help /save /load /cost /audit /think /auto /quit
 
-{C.DIM}Tools:{C.RESET}  File ops, search, commands, git, {C.GREEN}web search & fetch (NEW){C.RESET}
+{C.DIM}Tools:{C.RESET}  File ops, search, commands, git, web search & fetch
+
+{C.GREEN}New in v4.0:{C.RESET}
+  - Parallel tool execution for faster multi-file operations
+  - Secret detection warns before committing sensitive data
+  - Cost tracking with /cost command
+  - Audit logging with /audit command
 
 {C.DIM}Tips:{C.RESET}
   - Type 'a' during confirmation to auto-approve all actions
   - Create CIRCUIT.md for project-specific instructions
-  - Use /save to save sessions, /load to resume
-  - Use /help for full command list
+  - Use /think on to see agent's reasoning process
 {C.CYAN}{'─' * 60}{C.RESET}
 """)
 
@@ -84,20 +89,27 @@ def print_help():
   /logout      - Delete saved credentials
   /quit, /q    - Exit
 
-{C.BOLD}Session Management (NEW in v3.0):{C.RESET}
+{C.BOLD}Session Management:{C.RESET}
   /save [name] - Save current session
   /load [name] - Load a saved session (shows list if no name)
   /sessions    - List all saved sessions
   /compact     - Compress old messages to save tokens
+
+{C.BOLD}v4.0 Features:{C.RESET}
+  /cost        - Show estimated API costs for session
+  /audit       - Show audit log statistics
+  /audit recent - Show recent audit entries
+  /think [on|off] - Toggle thinking mode (shows agent reasoning)
 
 {C.BOLD}During Confirmations:{C.RESET}
   y            - Yes, allow this action
   n            - No, cancel this action
   a            - Allow this and all future actions (auto-approve)
 
-{C.BOLD}New Tools in v3.0:{C.RESET}
-  web_fetch    - Fetch documentation and web content
-  web_search   - Search the web for solutions
+{C.BOLD}Security Features (v4.0):{C.RESET}
+  - Secret detection warns before writing files with API keys, passwords, etc.
+  - Audit logging tracks all tool calls and API usage
+  - Cost tracking helps monitor API expenses
 
 {C.BOLD}Tips:{C.RESET}
   - Ask the agent to explore the codebase first
@@ -105,10 +117,12 @@ def print_help():
   - Use /auto to skip confirmations (use with caution!)
   - Use web_search to look up error messages
   - Create a CIRCUIT.md file for project-specific instructions
+  - Use /think on to understand agent's reasoning
 
 {C.BOLD}Configuration:{C.RESET}
   Config:     ~/.config/circuit-agent/config.json
   Sessions:   ~/.config/circuit-agent/sessions/
+  Audit logs: ~/.config/circuit-agent/audit/
   Global:     ~/.config/circuit-agent/CIRCUIT.md
   Project:    ./CIRCUIT.md (auto-loaded)
 """)

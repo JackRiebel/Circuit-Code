@@ -32,6 +32,13 @@ TOKEN_URL = "https://id.cisco.com/oauth2/default/v1/token"
 CHAT_BASE_URL = "https://chat-ai.cisco.com/openai/deployments"
 API_VERSION = "2025-04-01-preview"
 
+# SSL Configuration - Enable verification by default for security
+# Set CIRCUIT_DISABLE_SSL_VERIFY=1 only for development/testing with self-signed certs
+SSL_VERIFY = not os.environ.get("CIRCUIT_DISABLE_SSL_VERIFY", "").lower() in ("1", "true", "yes")
+if not SSL_VERIFY:
+    import warnings
+    warnings.warn("SSL verification disabled - NOT recommended for production!", UserWarning)
+
 MODELS = {
     "1": ("gpt-4.1", "GPT-4.1 - Complex reasoning (120K context)"),
     "2": ("gpt-4o", "GPT-4o - Fast multimodal (120K context)"),
@@ -83,7 +90,7 @@ class CircuitClient:
         creds = f"{self.client_id}:{self.client_secret}"
         auth = base64.b64encode(creds.encode()).decode()
 
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+        async with httpx.AsyncClient(verify=SSL_VERIFY, timeout=30.0) as client:
             r = await client.post(
                 TOKEN_URL,
                 headers={
@@ -108,7 +115,7 @@ class CircuitClient:
 
         url = f"{CHAT_BASE_URL}/{self.model}/chat/completions?api-version={API_VERSION}"
 
-        async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
+        async with httpx.AsyncClient(verify=SSL_VERIFY, timeout=60.0) as client:
             r = await client.post(
                 url,
                 headers={"Content-Type": "application/json", "api-key": token},

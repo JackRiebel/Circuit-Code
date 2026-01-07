@@ -1,24 +1,29 @@
 """
-Circuit Agent v3.0 - Core agent class with streaming, parallel tools, and web access.
+Circuit Agent v4.0 - Core agent class with streaming, parallel tools, and web access.
 """
 
 import asyncio
 import base64
 import json
 import os
+import re
 import time
 from typing import Optional, List, Dict, Any, Tuple, Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
 from .config import (
     TOKEN_URL, CHAT_BASE_URL, API_VERSION,
-    load_circuit_md, detect_project_type
+    load_circuit_md, detect_project_type, ssl_config
 )
 from .tools import TOOLS, FileTools, GitTools, WebTools, BackupManager
 from .memory import SessionManager, ContextCompactor
 from .streaming import stream_chat_completion, non_streaming_chat_completion, StreamingResponse
 from .ui import C, clear_line, show_diff, print_tool_call, print_error, print_success
+from .security import SecretDetector, AuditLogger, CostTracker
+from .context import SmartContextManager
+from .errors import SmartError
 
 
 class CircuitAgent:
@@ -34,10 +39,13 @@ class CircuitAgent:
         self.model = "gpt-4o"
         self.history: List[Dict[str, Any]] = []
 
+        # v4.0: Smart error handling (initialize before tools)
+        self.smart_error = SmartError(working_dir)
+
         # Initialize modular tool classes
         self.backup_manager = BackupManager(working_dir)
-        self.file_tools = FileTools(working_dir, self.backup_manager)
-        self.git_tools = GitTools(working_dir)
+        self.file_tools = FileTools(working_dir, self.backup_manager, self.smart_error)
+        self.git_tools = GitTools(working_dir, self.smart_error)
         self.web_tools = WebTools()
 
         # Session and compaction
@@ -50,9 +58,18 @@ class CircuitAgent:
         self.last_prompt_tokens = 0
         self.last_completion_tokens = 0
 
+        # v4.0: Security features
+        self.secret_detector = SecretDetector(enabled=True)
+        self.audit_logger = AuditLogger(enabled=True)
+        self.cost_tracker = CostTracker()
+
+        # v4.0: Smart context management
+        self.context_manager = SmartContextManager(max_tokens=120000)
+
         # Settings
         self.stream_responses = True
         self.auto_approve = False  # Skip confirmations when True
+        self.thinking_mode = False  # v4.0: Show reasoning before actions
         self.max_retries = 3
         self.retry_delay = 1.0  # Base delay for exponential backoff
 
@@ -69,7 +86,7 @@ class CircuitAgent:
         if circuit_md:
             circuit_section = f"\n## Project Instructions (from CIRCUIT.md)\n\n{circuit_md}\n"
 
-        self.system_prompt = f"""You are Circuit Agent v3.0, an expert AI coding assistant working in: {self.working_dir}
+        self.system_prompt = f"""You are Circuit Agent v4.0, an expert AI coding assistant working in: {self.working_dir}
 
 {project_info}
 {circuit_section}
@@ -92,7 +109,7 @@ You help with software engineering tasks by reading code, making edits, running 
 - **git_commit**: Stage files and create commits
 - **git_branch**: List, create, switch, or delete branches
 
-### Web Operations (NEW in v3.0)
+### Web Operations
 - **web_fetch**: Fetch content from URLs (documentation, APIs, etc.). Returns markdown.
 - **web_search**: Search the web for information. Returns results with titles, URLs, snippets.
 
@@ -152,7 +169,38 @@ Then read the output and convert to proper markdown.
 - Show relevant code snippets when explaining
 - Break complex tasks into clear steps
 - When errors occur, explain what went wrong and how to fix it
-- Use markdown formatting for readability"""
+- Use markdown formatting for readability
+
+## Thinking Mode
+
+When thinking mode is enabled, show your reasoning process before taking actions:
+
+<thinking>
+- What I understand about the request
+- My approach to solving this
+- Tools I'll use and why
+- Potential issues to watch for
+</thinking>
+
+Then proceed with the actual response and actions."""
+
+    def _get_thinking_prompt(self) -> str:
+        """Get the thinking mode instruction if enabled."""
+        if not self.thinking_mode:
+            return ""
+
+        return """
+
+IMPORTANT: Thinking mode is ON. Before taking any action, briefly explain your reasoning:
+
+<thinking>
+1. What the user is asking for
+2. What I need to do to accomplish this
+3. Which tools I'll use and in what order
+4. Any potential issues or edge cases
+</thinking>
+
+Then proceed with your response."""
 
     async def get_token(self) -> str:
         """Get OAuth access token, refreshing if needed."""
@@ -162,7 +210,7 @@ Then read the output and convert to proper markdown.
         creds = f"{self.client_id}:{self.client_secret}"
         auth = base64.b64encode(creds.encode()).decode()
 
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+        async with httpx.AsyncClient(verify=ssl_config.get_verify_param(), timeout=30.0) as client:
             for attempt in range(self.max_retries):
                 try:
                     r = await client.post(
@@ -269,6 +317,18 @@ Then read the output and convert to proper markdown.
             content = arguments.get("content", "")
             lines = content.count('\n') + 1
             print(f"{C.YELLOW}Write to: {C.BOLD}{path}{C.RESET} {C.DIM}({lines} lines){C.RESET}")
+
+            # v4.0: Check for secrets
+            secrets = self.secret_detector.scan(content)
+            if secrets:
+                critical = [s for s in secrets if s["severity"] == "critical"]
+                if critical:
+                    print(f"\n{C.RED}{C.BOLD}WARNING: Potential secrets detected!{C.RESET}")
+                else:
+                    print(f"\n{C.YELLOW}Warning: Potential sensitive data detected{C.RESET}")
+                print(self.secret_detector.format_findings(secrets))
+                print()
+
             print(f"{C.DIM}Preview:{C.RESET}")
             preview_lines = content.split('\n')[:15]
             for i, line in enumerate(preview_lines, 1):
@@ -281,6 +341,17 @@ Then read the output and convert to proper markdown.
             old_text = arguments.get("old_text", "")
             new_text = arguments.get("new_text", "")
             print(f"{C.YELLOW}Edit: {C.BOLD}{path}{C.RESET}")
+
+            # v4.0: Check for secrets in new content
+            secrets = self.secret_detector.scan(new_text)
+            if secrets:
+                critical = [s for s in secrets if s["severity"] == "critical"]
+                if critical:
+                    print(f"\n{C.RED}{C.BOLD}WARNING: Potential secrets in new content!{C.RESET}")
+                else:
+                    print(f"\n{C.YELLOW}Warning: Potential sensitive data in new content{C.RESET}")
+                print(self.secret_detector.format_findings(secrets))
+
             print()
             show_diff(old_text, new_text, path)
 
@@ -338,6 +409,90 @@ Then read the output and convert to proper markdown.
             query = arguments.get('query', '')
             return query[:40] + ('...' if len(query) > 40 else '')
         return ""
+
+    # Read-only tools that can run in parallel safely
+    READ_ONLY_TOOLS = {
+        "read_file", "list_files", "search_files",
+        "git_status", "git_diff", "git_log", "git_branch",
+        "web_fetch", "web_search"
+    }
+
+    def _is_read_only_tool(self, tool_name: str) -> bool:
+        """Check if a tool is read-only and safe for parallel execution."""
+        return tool_name in self.READ_ONLY_TOOLS
+
+    async def _process_tool_calls_parallel(
+        self,
+        tool_calls: List[dict],
+        messages: list
+    ) -> List[str]:
+        """
+        Process multiple tool calls, running read-only tools in parallel.
+        Returns list of tool names processed.
+        """
+        if not tool_calls:
+            return []
+
+        # Separate read-only (parallelizable) and write tools
+        read_only_calls = []
+        write_calls = []
+
+        for tc in tool_calls:
+            func = tc.get("function", {})
+            tool_name = func.get("name", "")
+            if self._is_read_only_tool(tool_name):
+                read_only_calls.append(tc)
+            else:
+                write_calls.append(tc)
+
+        tool_names = []
+
+        # Process read-only calls in parallel
+        if read_only_calls:
+            tasks = [
+                self._process_tool_call_async(tc)
+                for tc in read_only_calls
+            ]
+            results = await asyncio.gather(*tasks)
+
+            # Add results to messages in order
+            for tc, (tool_name, result) in zip(read_only_calls, results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": str(result)
+                })
+                tool_names.append(tool_name)
+
+        # Process write calls sequentially (they need confirmations)
+        for tc in write_calls:
+            tool_name = await self._process_tool_call(tc, messages)
+            tool_names.append(tool_name)
+
+        return tool_names
+
+    async def _process_tool_call_async(self, tool_call: dict) -> Tuple[str, Any]:
+        """Process a single tool call asynchronously. Returns (tool_name, result)."""
+        func = tool_call["function"]
+        tool_name = func["name"]
+
+        try:
+            arguments = json.loads(func["arguments"])
+        except json.JSONDecodeError:
+            arguments = {}
+
+        # Show tool usage
+        detail = self._get_tool_detail(tool_name, arguments)
+        print_tool_call(tool_name, detail)
+
+        # Execute the tool (read-only tools don't need confirmation)
+        loop = asyncio.get_event_loop()
+        result, _ = await loop.run_in_executor(
+            None,
+            lambda: self._execute_tool(tool_name, arguments)
+        )
+
+        return tool_name, result
 
     async def _make_api_call(
         self,
@@ -398,10 +553,20 @@ Then read the output and convert to proper markdown.
         url = f"{CHAT_BASE_URL}/{self.model}/chat/completions?api-version={API_VERSION}"
         headers = {"Content-Type": "application/json", "api-key": token}
 
-        # Build messages with system prompt
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+        # v4.0: Log user input
+        self.audit_logger.log_user_input(user_message)
+
+        # Build messages with system prompt (include thinking mode if enabled)
+        system_content = self.system_prompt + self._get_thinking_prompt()
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": system_content}]
         messages.extend(self.history)
         messages.append({"role": "user", "content": user_message})
+
+        # v4.0: Optimize context if needed
+        if len(messages) > 30:
+            messages, opt_stats = self.context_manager.optimize_context(messages)
+            if opt_stats.get("tokens_saved", 0) > 1000:
+                print(f"{C.DIM}  [Context optimized: {opt_stats['tokens_saved']:,} tokens saved]{C.RESET}")
 
         iteration = 0
         max_iterations = 25
@@ -412,7 +577,7 @@ Then read the output and convert to proper markdown.
         self.last_prompt_tokens = 0
         self.last_completion_tokens = 0
 
-        async with httpx.AsyncClient(verify=False, timeout=180.0) as client:
+        async with httpx.AsyncClient(verify=ssl_config.get_verify_param(), timeout=180.0) as client:
             while iteration < max_iterations:
                 iteration += 1
 
@@ -438,6 +603,10 @@ Then read the output and convert to proper markdown.
                 self.session_prompt_tokens += response.prompt_tokens
                 self.session_completion_tokens += response.completion_tokens
 
+                # v4.0: Track costs and audit
+                self.cost_tracker.track(self.model, response.prompt_tokens, response.completion_tokens)
+                self.audit_logger.log_api_call(self.model, response.prompt_tokens, response.completion_tokens)
+
                 # Add user message to history on first successful response
                 if not user_msg_added:
                     self.history.append({"role": "user", "content": user_message})
@@ -453,7 +622,7 @@ Then read the output and convert to proper markdown.
                         self.history.append({"role": "assistant", "content": accumulated_content})
                     return accumulated_content
 
-                # Process tool calls
+                # Process tool calls (with parallel execution for read-only tools)
                 tool_calls_dict = response.get_tool_calls_dict()
                 messages.append({
                     "role": "assistant",
@@ -461,10 +630,8 @@ Then read the output and convert to proper markdown.
                     "tool_calls": tool_calls_dict
                 })
 
-                tool_names = []
-                for tc in tool_calls_dict:
-                    tool_name = await self._process_tool_call(tc, messages)
-                    tool_names.append(tool_name)
+                # Use parallel processing for multiple tool calls
+                tool_names = await self._process_tool_calls_parallel(tool_calls_dict, messages)
 
                 # Add tool summary to history (not the full tool_calls object)
                 self.history.append({
@@ -510,6 +677,9 @@ Then read the output and convert to proper markdown.
             else:
                 result = "Action cancelled by user"
                 print(f"  {C.YELLOW}Cancelled{C.RESET}")
+
+        # v4.0: Log tool call
+        self.audit_logger.log_tool_call(tool_name, arguments, str(result), success=True)
 
         # Add tool result to messages
         messages.append({
@@ -586,3 +756,30 @@ Then read the output and convert to proper markdown.
 
         self.history, stats = self.compactor.compact(self.history)
         return True, stats
+
+    # v4.0: Cost tracking methods
+    def get_cost_stats(self) -> Dict[str, Any]:
+        """Get detailed cost statistics."""
+        return self.cost_tracker.get_stats()
+
+    def get_cost_summary(self) -> str:
+        """Get formatted cost summary."""
+        return self.cost_tracker.format_stats()
+
+    # v4.0: Audit methods
+    def get_audit_stats(self) -> Dict[str, Any]:
+        """Get audit log statistics."""
+        return self.audit_logger.get_session_stats()
+
+    def get_recent_audit_entries(self, count: int = 10) -> List[Dict]:
+        """Get recent audit log entries."""
+        return self.audit_logger.get_recent_entries(count)
+
+    # v4.0: Security methods
+    def scan_for_secrets(self, content: str) -> List[Dict]:
+        """Scan content for potential secrets."""
+        return self.secret_detector.scan(content)
+
+    def set_thinking_mode(self, enabled: bool):
+        """Enable or disable thinking mode."""
+        self.thinking_mode = enabled

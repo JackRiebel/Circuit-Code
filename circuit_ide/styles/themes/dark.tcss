@@ -1,0 +1,51 @@
+/* Dark Theme for Circuit IDE */
+
+$background: #1e1e2e;
+$surface: #313244;
+$surface-lighten-1: #45475a;
+$surface-lighten-2: #585b70;
+
+$primary: #89b4fa;
+$primary-lighten-1: #b4befe;
+$primary-lighten-2: #cdd6f4;
+
+$secondary: #a6e3a1;
+$accent: #fab387;
+
+$text: #cdd6f4;
+$text-muted: #a6adc8;
+
+$success: #a6e3a1;
+$warning: #f9e2af;
+$error: #f38ba8;
+
+/* Apply theme */
+Screen {
+    background: $background;
+    color: $text;
+}
+
+#header {
+    background: $surface;
+}
+
+#sidebar {
+    background: $background;
+}
+
+#file-tree-header {
+    background: $surface;
+    color: $primary;
+}
+
+.chat-message-user {
+    background: $surface-lighten-1;
+}
+
+.chat-message-assistant {
+    background: $surface;
+}
+
+#footer {
+    background: $surface;
+}

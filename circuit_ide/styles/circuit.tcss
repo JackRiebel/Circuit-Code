@@ -1,0 +1,355 @@
+/* Circuit IDE Main Stylesheet */
+
+/* Global */
+Screen {
+    background: $surface;
+}
+
+/* Header */
+#header {
+    dock: top;
+    height: 1;
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+#header-title {
+    width: auto;
+    padding: 0 2;
+}
+
+#header-status {
+    dock: right;
+    width: auto;
+    padding: 0 2;
+}
+
+/* Main Layout */
+#main-container {
+    layout: horizontal;
+    height: 1fr;
+}
+
+/* Left Sidebar - File Tree */
+#sidebar {
+    width: 30;
+    min-width: 20;
+    max-width: 50;
+    border-right: solid $primary-lighten-2;
+}
+
+#file-tree-container {
+    height: 1fr;
+}
+
+#file-tree {
+    scrollbar-gutter: stable;
+}
+
+#file-tree-header {
+    height: 1;
+    background: $surface-lighten-1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+/* File Tree Styling */
+FileTree > .tree--label {
+    padding: 0 1;
+}
+
+FileTree > .tree--cursor {
+    background: $accent;
+    color: $text;
+}
+
+FileTree > .tree--highlight {
+    background: $primary;
+}
+
+/* Right Content Area */
+#content {
+    width: 1fr;
+    layout: vertical;
+}
+
+/* Editor Panel */
+#editor-container {
+    height: 2fr;
+    border-bottom: solid $primary-lighten-2;
+}
+
+#editor-header {
+    height: 1;
+    background: $surface-lighten-1;
+    padding: 0 1;
+}
+
+#editor-filename {
+    width: auto;
+    text-style: bold;
+}
+
+#editor-modified {
+    width: auto;
+    color: $warning;
+    padding: 0 1;
+}
+
+#editor-position {
+    dock: right;
+    width: auto;
+    color: $text-muted;
+}
+
+#code-editor {
+    height: 1fr;
+}
+
+CodeEditor {
+    scrollbar-gutter: stable;
+}
+
+CodeEditor > .text-area--cursor {
+    background: $accent;
+    color: $text;
+}
+
+/* Bottom Panel - Chat + Agent Status */
+#bottom-panel {
+    height: 1fr;
+    min-height: 10;
+    layout: horizontal;
+}
+
+/* Agent Status Panel */
+#agent-panel {
+    width: 25;
+    min-width: 20;
+    max-width: 35;
+    border-right: solid $primary-lighten-2;
+    padding: 1;
+}
+
+#agent-panel-header {
+    height: 1;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.agent-stat {
+    height: 1;
+    margin-bottom: 0;
+}
+
+.agent-stat-label {
+    width: 10;
+    color: $text-muted;
+}
+
+.agent-stat-value {
+    width: 1fr;
+}
+
+#agent-thinking {
+    margin-top: 1;
+    color: $warning;
+    text-style: italic;
+}
+
+/* Chat Panel */
+#chat-container {
+    width: 1fr;
+}
+
+#chat-header {
+    height: 1;
+    background: $surface-lighten-1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+#chat-messages {
+    height: 1fr;
+    scrollbar-gutter: stable;
+    padding: 0 1;
+}
+
+.chat-message {
+    margin: 1 0;
+    padding: 0 1;
+}
+
+.chat-message-user {
+    background: $primary;
+    border: solid $primary-lighten-1;
+}
+
+.chat-message-assistant {
+    background: $surface-lighten-1;
+    border: solid $surface-lighten-2;
+}
+
+.chat-message-tool {
+    background: $surface;
+    color: $text-muted;
+    text-style: italic;
+}
+
+.chat-message-header {
+    text-style: bold;
+    margin-bottom: 0;
+}
+
+.chat-message-content {
+    padding: 0;
+}
+
+#chat-input-container {
+    height: 3;
+    border-top: solid $primary-lighten-2;
+    padding: 0 1;
+}
+
+#chat-input {
+    height: 1fr;
+    border: none;
+    background: $surface-lighten-1;
+}
+
+#chat-input:focus {
+    border: solid $accent;
+}
+
+/* Footer / Status Bar */
+#footer {
+    dock: bottom;
+    height: 1;
+    background: $primary;
+    layout: horizontal;
+}
+
+#footer-left {
+    width: 1fr;
+    padding: 0 1;
+}
+
+#footer-right {
+    width: auto;
+    padding: 0 1;
+}
+
+.footer-item {
+    width: auto;
+    margin-right: 2;
+}
+
+/* Modal Dialogs */
+.modal-dialog {
+    align: center middle;
+    width: 60%;
+    max-width: 80;
+    height: auto;
+    max-height: 80%;
+    background: $surface;
+    border: solid $primary;
+    padding: 1 2;
+}
+
+.modal-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+/* Command Palette */
+#command-palette {
+    align: center top;
+    margin-top: 5;
+    width: 60%;
+    max-width: 80;
+    height: auto;
+    max-height: 50%;
+    background: $surface;
+    border: solid $accent;
+}
+
+#command-palette-input {
+    height: 3;
+    border-bottom: solid $primary-lighten-2;
+    padding: 1;
+}
+
+#command-palette-results {
+    height: auto;
+    max-height: 20;
+    padding: 0;
+}
+
+.command-item {
+    height: 1;
+    padding: 0 1;
+}
+
+.command-item:hover {
+    background: $accent;
+}
+
+/* Diff View */
+.diff-added {
+    background: $success 20%;
+    color: $success;
+}
+
+.diff-removed {
+    background: $error 20%;
+    color: $error;
+}
+
+.diff-context {
+    color: $text-muted;
+}
+
+/* Loading/Progress */
+#loading-indicator {
+    dock: top;
+    height: 1;
+    background: $warning;
+    color: $text;
+    text-align: center;
+}
+
+/* Tool Call Display */
+.tool-call {
+    padding: 0 1;
+    margin: 0;
+}
+
+.tool-call-name {
+    color: $accent;
+    text-style: bold;
+}
+
+.tool-call-detail {
+    color: $text-muted;
+}
+
+.tool-call-status-success {
+    color: $success;
+}
+
+.tool-call-status-error {
+    color: $error;
+}
+
+.tool-call-status-pending {
+    color: $warning;
+}
+
+/* Placeholders */
+.placeholder {
+    color: $text-muted;
+    text-style: italic;
+    text-align: center;
+    padding: 2;
+}

@@ -76,11 +76,14 @@ class SessionManager:
 
             path = self._get_session_path(name)
 
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(session_data, f, indent=2, default=str)
-
-            # Set restrictive permissions
-            os.chmod(path, 0o600)
+            # Create file with restrictive permissions from the start (avoids TOCTOU)
+            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(session_data, f, indent=2, default=str)
+            except Exception:
+                os.close(fd)
+                raise
 
             return True, f"Session saved: {path}"
         except Exception as e:

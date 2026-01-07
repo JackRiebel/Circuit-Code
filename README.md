@@ -1,152 +1,187 @@
-# Circuit Agent v3.0
+# Circuit IDE
 
-An AI-powered coding assistant for Cisco Circuit, similar to Claude Code. Works in your project directory with full file access, git integration, shell command execution, and **web search capabilities**.
+A modern, VS Code-style AI-powered IDE built with Python and PySide6. Features dual AI provider support (Cisco Circuit API and Claude/Anthropic), integrated Git management, and a professional code editor with syntax highlighting.
 
-## What's New in v3.0
-
-- **Web Tools**: Search the web and fetch documentation directly from the agent
-- **Session Persistence**: Save and load conversation sessions
-- **Context Compaction**: Compress old messages to handle long conversations
-- **Modular Architecture**: Tools organized into separate modules
-
-## Quick Start
-
-```bash
-# Install dependencies
-pip install httpx html2text  # html2text optional but recommended for web tools
-
-# Run in current directory
-python circuit_agent.py
-
-# Or specify a project directory
-python circuit_agent.py /path/to/project
-```
+![Circuit IDE](assets/icon.png)
 
 ## Features
 
-### Tools (13 total)
+- **Dual AI Provider Support**: Switch between Cisco Circuit API and Claude (Anthropic) seamlessly
+- **VS Code-style Interface**: Familiar layout with activity bar, file explorer, tabs, and status bar
+- **Code Editor**: Syntax highlighting, line numbers, minimap, find/replace, and linting integration
+- **Git Integration**: Full source control with branch management, commit, push, pull, and diff viewer
+- **Theme Support**: Multiple dark themes (VS Code Dark, Monokai, Nord, Dracula)
+- **Real-time Linting**: Python linting with pylint/ruff/flake8 integration
+- **Token Tracking**: Monitor AI usage with token counts and cost estimates
 
-| Category | Tool | Description |
-|----------|------|-------------|
-| **File** | `read_file` | Read files with line numbers (supports line ranges) |
-| | `write_file` | Create or overwrite files |
-| | `edit_file` | Find and replace text in files |
-| | `list_files` | Find files by glob pattern |
-| | `search_files` | Regex search across files |
-| | `run_command` | Execute shell commands |
-| **Git** | `git_status` | Show working tree status |
-| | `git_diff` | Show changes (staged/unstaged) |
-| | `git_log` | View commit history |
-| | `git_commit` | Stage and commit changes |
-| | `git_branch` | List/create/switch branches |
-| **Web** | `web_fetch` | Fetch content from URLs (docs, APIs) |
-| | `web_search` | Search the web for information |
+## Quick Start
 
-### Commands
+### Prerequisites
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all commands |
-| `/files` | List files in working directory |
-| `/clear` | Clear conversation history |
-| `/model` | Change AI model |
-| `/tokens` | Show token usage |
-| `/undo` | Restore file from backup |
-| `/git` | Quick git status |
-| `/auto` | Toggle auto-approve mode |
-| `/config` | Show configuration |
-| `/save [name]` | Save current session |
-| `/load [name]` | Load a saved session |
-| `/sessions` | List all saved sessions |
-| `/compact` | Compress old messages |
-| `/quit` | Exit |
+- Python 3.11 or higher
+- pip (Python package manager)
+- Git (for version control features)
 
-### Safety Features
-- **Confirmation prompts** for file writes and dangerous commands
-- **Auto-approve mode** - Type `a` during confirmation or use `/auto`
-- **Automatic backups** before file modifications
-- **Undo support** - Restore files with `/undo`
-- **Path traversal protection** - Can't access files outside working directory
+### Installation
 
-## Credentials
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/yourusername/circuit-ide.git
+   cd circuit-ide
+   ```
 
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   Or install manually:
+   ```bash
+   pip install PySide6 httpx pygments
+   ```
+
+3. **Run the application:**
+   ```bash
+   python circuit_ide_gui/main.py
+   ```
+
+### First Launch
+
+1. Open a project folder via **File > Open Folder** or click "Open Folder" on the welcome screen
+2. Go to **Settings** (gear icon in activity bar) to configure your AI provider:
+   - For **Cisco Circuit**: Enter your Client ID, Client Secret, and App Key
+   - For **Claude/Anthropic**: Enter your Anthropic API key
+3. Start chatting with the AI in the right panel!
+
+## Configuration
+
+### AI Providers
+
+#### Cisco Circuit API
 Get credentials from: https://developer.cisco.com/site/ai-ml/
-→ Manage Circuit API Keys → View
+- Navigate to "Manage Circuit API Keys" > "View"
+- You'll need: Client ID, Client Secret, and App Key
 
-### Options (checked in order):
-1. **Config file**: `~/.config/circuit-agent/config.json` (saved on first run)
-2. **Environment variables**: `CIRCUIT_CLIENT_ID`, `CIRCUIT_CLIENT_SECRET`, `CIRCUIT_APP_KEY`
-3. **Interactive prompt** (with option to save)
+#### Anthropic/Claude
+Get an API key from: https://console.anthropic.com/
+- Create an account and generate an API key
+- Supports Claude Sonnet 4, Opus 4, and other models
 
-## Project Configuration
+### Settings Location
 
-Create a `CIRCUIT.md` file in your project root to give the agent project-specific instructions:
+Settings are stored in:
+- **macOS**: `~/.config/circuit-ide-gui/settings.json`
+- **Linux**: `~/.config/circuit-ide-gui/settings.json`
+- **Windows**: `%APPDATA%\circuit-ide-gui\settings.json`
 
-```markdown
-## Project Context
-This is a Python FastAPI backend with PostgreSQL.
+## Keyboard Shortcuts
 
-## Conventions
-- Use snake_case for functions
-- Always add type hints
-- Run `pytest` before committing
+| Shortcut | Action |
+|----------|--------|
+| `Cmd/Ctrl + O` | Open folder |
+| `Cmd/Ctrl + S` | Save file |
+| `Cmd/Ctrl + F` | Find in file |
+| `Cmd/Ctrl + G` | Go to line |
+| `Cmd/Ctrl + W` | Close tab |
+| `Cmd/Ctrl + Tab` | Next tab |
+| `Cmd/Ctrl + Shift + Tab` | Previous tab |
 
-## Commands
-- Test: `pytest -v`
-- Lint: `ruff check .`
-```
-
-The agent automatically loads this into its system prompt.
-
-## Available Models
-
-| # | Model | Context | Best For |
-|---|-------|---------|----------|
-| 1 | gpt-4.1 | 120K | Complex reasoning |
-| 2 | gpt-4o | 120K | Fast multimodal (default) |
-| 3 | gpt-4o-mini | 120K | Quick & efficient |
-| 4 | o4-mini | 200K | Large documents |
-
-## Architecture
+## Project Structure
 
 ```
-circuit_agent.py          # Entry point
-circuit_agent/
-├── __init__.py           # Package exports, version 3.0.0
-├── agent.py              # CircuitAgent class (streaming, tools, retry)
-├── cli.py                # Main loop and slash commands
-├── config.py             # Credentials and CIRCUIT.md loading
-├── streaming.py          # SSE response parsing
-├── ui.py                 # Colors and display helpers
-├── tools/                # Modular tool implementations
-│   ├── __init__.py       # Tool exports, combined TOOLS list
-│   ├── executor.py       # ToolExecutor with parallel support
-│   ├── file_tools.py     # File operations (read, write, edit, etc.)
-│   ├── git_tools.py      # Git operations (status, diff, commit, etc.)
-│   └── web_tools.py      # Web operations (fetch, search)
-└── memory/               # Session and context management
-    ├── __init__.py       # Memory module exports
-    ├── session.py        # Session save/load
-    └── compaction.py     # Context compaction for long conversations
+circuit-ide/
+├── circuit_ide_gui/          # Main GUI application
+│   └── main.py               # Application entry point
+├── circuit_agent/            # Core agent package (CLI)
+│   ├── agent.py              # CircuitAgent class
+│   ├── cli.py                # CLI interface
+│   ├── config.py             # Configuration management
+│   ├── streaming.py          # SSE response parsing
+│   ├── security.py           # Secret detection, audit
+│   └── tools/                # Tool implementations
+├── assets/                   # Icons and images
+│   ├── icon.svg              # App icon (SVG)
+│   └── icon.png              # App icon (PNG)
+├── docs/                     # Documentation
+├── tests/                    # Test suite
+├── pyproject.toml            # Project configuration
+└── README.md                 # This file
 ```
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `circuit_agent.py` | Main entry point |
-| `Circuit_Chat_Test.py` | Simple chat test (no tools) |
-| `SETUP.md` | Detailed setup & troubleshooting |
-| `CODEBASE_SUMMARY.md` | Codebase overview |
-| `PLAN_V3.md` | v3.0 enhancement plan |
-| `CIRCUIT.md` | Project-specific agent instructions |
 
 ## Dependencies
 
-```
-# Required
-httpx>=0.24.0          # HTTP client for API calls
+| Package | Version | Purpose |
+|---------|---------|---------|
+| PySide6 | >=6.6.0 | Qt GUI framework |
+| httpx | >=0.25.0 | HTTP client for API calls |
+| pygments | >=2.17.0 | Syntax highlighting |
+| anthropic | >=0.18.0 | Anthropic Claude API (optional) |
 
-# Optional (recommended)
-html2text>=2020.1.16   # HTML to markdown for web_fetch
+## Git Integration
+
+The Git panel provides:
+- **Branch Management**: View and switch branches
+- **Staging**: Stage individual files or all changes
+- **Commits**: Write commit messages and commit
+- **Sync**: Pull from and push to remote
+- **History**: View recent commits
+- **Diff Viewer**: See changes before committing
+
+Git uses your system's git configuration, so make sure you have:
+- Git installed and in your PATH
+- GitHub/GitLab credentials configured (SSH key or credential helper)
+
+## Themes
+
+Available themes:
+- **VS Code Dark** (default)
+- **Monokai**
+- **Nord**
+- **Dracula**
+
+Change themes in Settings > Theme.
+
+## Troubleshooting
+
+### "AI agent not connected"
+- Check your API credentials in Settings
+- Ensure you have internet connectivity
+- Verify the API service is available
+
+### Git operations failing
+- Ensure git is installed: `git --version`
+- Check git credentials are configured: `git config --list`
+- For GitHub, set up SSH keys or use credential helper
+
+### Font warnings on startup
+The app tries to use Monospace/Consolas fonts. If unavailable, it falls back to system fonts. This warning can be safely ignored.
+
+## Development
+
+### Running Tests
+```bash
+python -m pytest tests/
 ```
+
+### Building for Distribution
+```bash
+# Install build tools
+pip install pyinstaller
+
+# Create standalone executable
+pyinstaller --onefile --windowed circuit_ide_gui/main.py
+```
+
+## License
+
+MIT License - See LICENSE file for details.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes
+4. Run tests: `python -m pytest`
+5. Commit: `git commit -m "Add feature"`
+6. Push: `git push origin feature-name`
+7. Open a Pull Request

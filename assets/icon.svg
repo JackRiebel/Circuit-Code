@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#0d1b2a"/>
+    </linearGradient>
+    <linearGradient id="circuitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00d4ff"/>
+      <stop offset="100%" style="stop-color:#7cb9e8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bgGrad)"/>
+
+  <!-- Circuit board pattern -->
+  <g stroke="url(#circuitGrad)" stroke-width="3" fill="none" opacity="0.3">
+    <path d="M64 128 H192 V256 H320"/>
+    <path d="M448 128 H384 V192"/>
+    <path d="M64 384 H128 V320 H256"/>
+    <path d="M448 384 H320 V320"/>
+    <path d="M192 448 V384"/>
+    <path d="M320 64 V128"/>
+  </g>
+
+  <!-- Main circuit symbol - stylized "C" with circuit nodes -->
+  <g transform="translate(256, 256)">
+    <!-- Outer ring -->
+    <circle cx="0" cy="0" r="140" stroke="url(#circuitGrad)" stroke-width="24" fill="none" stroke-dasharray="520 180"/>
+
+    <!-- Inner connections -->
+    <line x1="-80" y1="0" x2="80" y2="0" stroke="#00d4ff" stroke-width="8"/>
+    <line x1="0" y1="-80" x2="0" y2="80" stroke="#00d4ff" stroke-width="8"/>
+
+    <!-- Circuit nodes -->
+    <circle cx="0" cy="0" r="24" fill="#00d4ff"/>
+    <circle cx="-80" cy="0" r="16" fill="#7cb9e8"/>
+    <circle cx="80" cy="0" r="16" fill="#7cb9e8"/>
+    <circle cx="0" cy="-80" r="16" fill="#7cb9e8"/>
+    <circle cx="0" cy="80" r="16" fill="#7cb9e8"/>
+
+    <!-- Outer nodes on the arc -->
+    <circle cx="100" cy="-100" r="12" fill="#00d4ff"/>
+    <circle cx="-100" cy="-100" r="12" fill="#00d4ff"/>
+    <circle cx="-100" cy="100" r="12" fill="#00d4ff"/>
+  </g>
+
+  <!-- Accent glow -->
+  <circle cx="256" cy="256" r="24" fill="#00d4ff" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.4;0.8" dur="2s" repeatCount="indefinite"/>
+  </circle>
+</svg>

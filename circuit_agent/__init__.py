@@ -1,23 +1,31 @@
 """
-Circuit Agent v3.0 - AI-Powered Coding Assistant
+Circuit Agent v5.0 - AI-Powered Coding Assistant
 
 A Cisco Circuit-powered coding assistant that works like Claude Code:
 reads files, writes code, runs commands, searches the web, and helps
 with software engineering tasks in your project directory.
 
-New in v3.0:
-- Web fetch and search tools
-- Session save/load
-- Context compaction
-- Modular tool architecture
+New in v5.0:
+- Terminal IDE: Purpose-built visual environment for AI coding
+- Smart context management for long conversations
+- Improved error messages with suggestions
+
+Previous (v4.0):
+- Parallel tool execution for faster multi-file operations
+- Secret detection and warnings
+- Audit logging for all actions
+- Cost tracking per session
+- Thinking mode for reasoning display
+- Headless/CI mode support
 """
 
-__version__ = "3.0.0"
+__version__ = "5.0.0-alpha"
 __author__ = "Circuit Agent"
 
 from .agent import CircuitAgent
 from .tools import TOOLS, FileTools, GitTools, WebTools, BackupManager
 from .memory import SessionManager, ContextCompactor
+from .security import SecretDetector, AuditLogger, CostTracker
 from .config import (
     load_credentials,
     save_credentials,
@@ -35,6 +43,9 @@ __all__ = [
     "BackupManager",
     "SessionManager",
     "ContextCompactor",
+    "SecretDetector",
+    "AuditLogger",
+    "CostTracker",
     "TOOLS",
     "load_credentials",
     "save_credentials",
